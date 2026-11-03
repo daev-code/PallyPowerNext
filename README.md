@@ -1,8 +1,8 @@
 # PallyPower Next Blessing
 
-Companion addon for [PallyPowerTW](https://github.com/ShikawaLePaladin/PallyPowerTW) (WoW 1.12 / Turtle WoW). Adds one button that
-casts the **next** blessing you still need to do, based on your PallyPower assignments: one
-cast per click.
+One button for [PallyPowerTW](https://github.com/ShikawaLePaladin/PallyPowerTW) that casts
+the next blessing you still owe, based on your PallyPower assignments. Each click casts one.
+For WoW 1.12 and Turtle WoW.
 
 ## Order
 
@@ -46,17 +46,21 @@ Individual
 Velandra         [Light]  6:03                OK
 ```
 
-- **Colour**: red = something is missing, yellow = unknown time left, < 5 min left, or
-  someone dead is without it, green = all good. Members out of sight count as fine, like on
-  PallyPower's buttons.
-- **Header**: the group (class and blessing icons) or "Individual", the wheel position
-  when you've picked one (`2/4`), and the time left on the right (`missing` / `no timer`).
-- **Rows**, in fixed columns: name, the blessing icon (overrides), time left on the assigned blessing (`missing` in muted red, or
-  `no timer`), and on the right, under a grey **Can cast?** label, whether a cast reaches
-  them: `OK`, `OOR`, `LOS`, `Dead`, `Not Here`, `Tank`. Class-coloured names still need it, grey ones have it.
-- The button is on the next click's group / player (or the blocked one). When everything is
-  up, it's on whatever runs out first; right-click and the wheel start from there. The
-  choice follows a once-a-second preview (holding Shift updates it).
+The button turns red when something is missing, and yellow when a time is unknown, under
+5 minutes, or when someone dead is without it. Green means everything is up. Members out of
+sight count as fine, the same as on PallyPower's own buttons.
+
+The header shows the group (class and blessing icons) or "Individual", the wheel position if
+you've picked one (`2/4`), and the time left on the right (`missing` or `no timer`).
+
+Below it, each row has a name, the blessing icon for overrides, and the time left on the
+assigned blessing (`missing` in muted red, or `no timer`). On the right, under a grey
+"Can cast?" label, you see whether a cast would reach them: `OK`, `OOR`, `LOS`, `Dead`,
+`Not Here` or `Tank`. Class-coloured names still need the blessing; grey ones already have it.
+
+The button always shows the group or player the next click is for, or the one that's
+blocking it. When everything is up, it shows whatever runs out first, and right-click and
+the wheel start from there. It updates once a second, or right away while you hold Shift.
 
 ## Options
 
@@ -129,11 +133,12 @@ that never get Salvation. `/ppnext tooltips` turns it off.
 
 ## Range and line of sight
 
-- **On click** the game itself checks spell range. Line of sight is checked with UnitXP_SP3
-  whenever the DLL is loaded, even if PallyPower's own UnitXP option is off.
-- **Preview** (button colour/icons) uses UnitXP's distance (30 yd for blessings, 40 yd for
-  Greater Blessings) plus line of sight. Without UnitXP it falls back to the ~28 yd follow
-  distance and no line-of-sight check.
+When you click, the game checks spell range itself. Line of sight is checked with UnitXP_SP3
+whenever the DLL is loaded, even if PallyPower's own UnitXP option is off.
+
+The button's colour and icons can't rely on the game's check, so they use UnitXP's distance
+(30 yd for blessings, 40 yd for Greater Blessings) plus line of sight. Without UnitXP they
+fall back to the roughly 28 yd follow distance, with no line-of-sight check.
 
 ## Rules
 
@@ -165,7 +170,9 @@ that never get Salvation. `/ppnext tooltips` turns it off.
 
 ## Install
 
-- **With a launcher or git:** add `https://github.com/daev-code/PallyPowerNext` as an addon, or
-  `git clone` it into `Interface\AddOns`. Keep the `.git` folder: launchers that install
-  from git use it to fetch updates.
-- **By hand:** copy this folder to `Interface\AddOns\PallyPowerNext`. Updates are then manual too.
+Add `https://github.com/daev-code/PallyPowerNext` to your launcher, or `git clone` it into
+`Interface\AddOns`. Leave the `.git` folder in place: launchers that install from git need
+it to pull updates.
+
+You can also copy the folder to `Interface\AddOns\PallyPowerNext` yourself, but then
+you'll need to update it yourself too.
