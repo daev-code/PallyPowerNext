@@ -98,3 +98,7 @@ for it. Never write it into this repo (it's public).
    played on. Say "WoW 1.12" and link the repo of the addon being extended instead.
 6. Use [Conventional Commits](https://www.conventionalcommits.org/) for commit messages
    and PR titles (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`). See `CONTRIBUTING.md`.
+7. Before pushing a change players will notice, bump `## Version:` in the `.toc` once
+   per push, in its own `chore: bump version to x.y` commit: minor (1.1 -> 1.2) when
+   there's a `feat:`, patch (1.1 -> 1.1.1) for fixes only. Docs-only and other changes
+   players don't notice don't need a bump.
