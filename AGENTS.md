@@ -9,7 +9,13 @@ Files: `PallyPowerNext.toc`, `PallyPowerNext.lua`, `README.md` (user docs), this
 - Reads PallyPowerTW globals: `AllPallys`, `PallyPower_Assignments`, `GetNormalBlessings`,
   `CurrentBuffs`, the timers `LastCast` / `LastCastPlayer`,
   `PallyPower_CastingSalvationOnTank`, `PallyPower_CheckTargetLoS`,
-  `PALLYPOWER_*BLESSINGDURATION`.
+  `PALLYPOWER_*BLESSINGDURATION`, and the icon tables `BuffIcon` (Greater) /
+  `BuffIconSmall` (normal) with `RegularBlessings`.
+- PallyPower's scan (`CurrentBuffs`) marks a blessing as present for either version. To find
+  members who only have the normal one (`normalOnly`), the addon compares their `UnitBuff`
+  textures with those two icon tables (cached per unit for 0.5 s). They're shown as `single`
+  and count as covered (`memberNeeds`), so only Shift + left-click (`overExisting`) recasts the
+  Greater Blessing over them.
 - PallyPower wipes a class timer when its UI refreshes before the buff scan sees a new buff
   (its own casts are shielded by a local this addon can't reach), so the addon keeps its own
   copy of the timers it sets (`ownTimers`) and restores them.
@@ -23,6 +29,19 @@ Files: `PallyPowerNext.toc`, `PallyPowerNext.lua`, `README.md` (user docs), this
   PallyPower's own UnitXP option is off (its check then always says yes). The preview can't
   put a spell on the cursor, so it uses UnitXP distance instead of `SpellCanTargetUnit`.
 - The button uses `PallyPowerBuffButtonTemplate`, parented to `PallyPowerBuffBar`.
+- Two markers: the tooltip's `->` (on a header) follows `status.subject`, the step the button
+  shows; `>` (on a row, button and tooltip) follows `status.markName`, who the click is cast
+  on. The click lines (`status.leftNext` / `status.rightNext`, for the modifiers held), the
+  target and the totals are worked out once a second (and when Shift changes) in
+  `computeStatus` with the same dry-run `try*` functions as the preview. Right-click order
+  comes from `rightClickPlan`, which the click handler uses too, so the line and the click
+  can't disagree. `collect` also returns the players you have nothing assigned to ("No
+  config").
+- Clicks route by `status.subject` (what the button shows), not by a fresh preview, so a
+  click never works on anything else. `OnClick` sets `nextRefresh = 0` so the button
+  refreshes on the next frame; the recent-cast guard then moves it past the step just cast.
+  Shift + left-click passes `overExisting` to `tryGroup`, which skips the "nobody needs it"
+  check.
 - Collapsed buff bar: PallyPower's buttons are faded out and made click-through rather than
   hidden, because PallyPower shows and hides them itself on every layout update.
 - Tooltip: a tooltip line only has a left and a right text, so the icons and middle columns
@@ -31,7 +50,10 @@ Files: `PallyPowerNext.toc`, `PallyPowerNext.lua`, `README.md` (user docs), this
 - Wraps the globals `PallyPowerBuffBar_MouseUp` and `PallyPower_ScaleFrame` (below layout)
   and the "Pally Buffs" title's `OnEnter` (collapse). The options section is added to
   `PallyPower_OptionsFrame` at file load.
-- Settings: `PPNext_Settings` (per character).
+- Settings: `PPNext_Settings` (per character). A missing value means the default. `below`
+  defaults to on: it's stored as `true`/`false` (never nil once set), and on the first login
+  without it the layout is switched like the setting does, so the title stays put.
+  `oocAlpha` defaults to 0.7; `others` (other blessing types in the tooltip) to off.
 
 ## Environment
 
@@ -45,9 +67,13 @@ Files: `PallyPowerNext.toc`, `PallyPowerNext.lua`, `README.md` (user docs), this
 
 ## Working copy vs repo
 
-The live copy is in the game's `Interface\AddOns\PallyPowerNext` folder. Edit there, test in game with
-`/reload`, then copy the changed files into this repo and commit. Before committing, check
-that both copies are identical (for example by comparing hashes).
+Edit the files in this repo, not the game's copy. To test, copy the changed files into the
+game's `Interface\AddOns\PallyPowerNext` folder and `/reload` in game. Before copying, check
+that the game's copy still matches the last commit (for example by comparing hashes), so you
+don't overwrite changes made there; if it doesn't, ask first.
+
+The game folder's location is in your local, private instructions. If it isn't there, ask
+for it. Never write it into this repo (it's public).
 
 ## Rules
 
@@ -64,7 +90,8 @@ that both copies are identical (for example by comparing hashes).
 2. Keep the header comment in the `.lua` in sync with what the code does.
 3. There are no automated tests: verify in game (`/reload`, and a full relog when
    SavedVariables or the `.toc` changed). Say in the report what wasn't tested.
-4. Copy the game-folder files into the repo, then commit code and docs together.
+4. Copy the changed files into the game folder and test there, then commit code and docs
+   together.
 5. Don't commit scratch notes, logs or downloaded third-party files. The repo is public:
    keep personal details (names, local paths, account or character names) out of files and
    commit messages, and don't name the specific client, launcher, server or realm this is

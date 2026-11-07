@@ -7,16 +7,24 @@
 --      also overwrites your blessing on the override members, so all of these go first.
 --   2. Individual overrides (PallyPower's per-player "normal blessing" assignments).
 --
+-- Every click works on what the button shows (the next step, or the one picked with the wheel).
+--
 -- Left-click            cast what's missing, or on but with a time left PallyPower doesn't know
 --                       (low time left is only shown on the button, not refreshed early)
--- Shift                 "cast anyway": Greater Blessings even if some members are not here,
---                       out of range or out of line of sight
+-- Shift                 "cast anyway": the Greater Blessing shown even if some members are not
+--                       here, out of range or out of line of sight, or everyone already has
+--                       it, Greater or normal version (refresh / upgrade)
 -- Right-click           overrides first, then the normal blessing on a member missing the Greater one
 -- Shift+right-click     "cast anyway": also refresh blessings that are still on (lowest time first)
 --
 -- Greater Blessing: only the members WITHOUT an override count. If one of them is not here
 -- (not visible), out of range or out of line of sight (UnitXP), it's skipped unless Shift.
 -- Skipped Greater Blessings leave only overrides.
+--
+-- The button lists who the next click is about, with ">" on the player the click is cast on.
+-- When a left-click can't do anything on the page shown, a line says what a right-click would
+-- cast instead. A totals line (always shown) counts everyone by state: Applied, Missing, OOR,
+-- LOS, Not Here, Dead, Tank, No config.
 --
 -- Pets: Greater Blessings on the Warrior class also land on pets. If PallyPower assigns pets
 -- the same blessing as Warriors they're part of that group; otherwise they're handled like
@@ -43,6 +51,8 @@ local function blessingName(b) return (PallyPower_BlessingID and PallyPower_Bles
 local function className(c) return (PallyPower_ClassID and PallyPower_ClassID[c]) or ("class " .. tostring(c)) end
 
 -- Own short-lived guard against double casts (PallyPower's equivalent is a local we can't reach).
+-- Keys include the blessing, so a player whose assignment was just changed can be blessed again
+-- right away.
 local recent = {}
 local function recentlyCast(key)
 	local t = recent[key]
@@ -223,6 +233,53 @@ local function overrideLeft(o)
 end
 
 
+local function ppIconPrefix()
+	if PP_PerUser and PP_PerUser.usehdicons == true then return "AddOns\\PallyPowerTW\\HD" end
+	return "AddOns\\PallyPowerTW\\"
+end
+
+-- PallyPower's icon path -> the texture path UnitBuff returns.
+local function buffTexture(path)
+	if not path then return nil end
+	return (string.gsub(path, ppIconPrefix(), ""))
+end
+
+-- PallyPower's scan says "has Might" for both the Greater and the normal version (10 min,
+-- shorter than the Greater one). The icons tell them apart, so the list can show members who
+-- only have the normal one ("single"). They count as covered: a plain left-click doesn't recast
+-- the Greater Blessing for them, Shift + left-click does. Buff textures are cached per unit
+-- for half a second.
+local buffCache = {}  -- unit -> { at = time, tex = { [texture] = true } }
+local function unitBuffTextures(unit)
+	local now = GetTime()
+	local c = buffCache[unit]
+	if not c or now - c.at > AURA_CACHE_TIME then
+		c = { at = now, tex = {} }
+		for i = 1, 32 do
+			local t = UnitBuff(unit, i)
+			if not t then break end
+			c.tex[t] = true
+		end
+		buffCache[unit] = c
+	end
+	return c.tex
+end
+
+local function normalOnly(unit, b)
+	if RegularBlessings == true or not (BuffIcon and BuffIconSmall) then return false end
+	local big, small = buffTexture(BuffIcon[b]), buffTexture(BuffIconSmall[b])
+	if not big or not small or big == small then return false end
+	local tex = unitBuffTextures(unit)
+	return (tex[small] and not tex[big]) and true or false
+end
+
+-- Does a Greater Blessing group member need the Greater Blessing on a plain left-click?
+-- Missing, or on with an unknown time - but someone with only the normal version is covered.
+local function memberNeeds(g, m, left)
+	if m.stats[g] and normalOnly(m.unit, g) then return false end
+	return needs(m.stats[g], left)
+end
+
 ------------------------------------------------------------------------------
 -- Building the work list
 ------------------------------------------------------------------------------
@@ -230,12 +287,14 @@ end
 -- Returns:
 --   groups:    { {class=c, blessing=g, spell=id, members={...}, plain={...}, hasOverrides=bool} }
 --   overrides: { {unit=, name=, class=, blessing=b, spell=idsmall} }
+--   unassigned: members you have nothing to cast on (no assignment for their class, or a
+--               blessing you don't know) - only counted, for the "No config" total
 -- members are { unit=, name=, stats=, dead= }.
 -- includeDead: also list dead members (flagged dead=true) - only for the status display;
 -- casting never includes them.
 local function collect(includeDead)
-	local groups, overrides = {}, {}
-	if not CurrentBuffs then return groups, overrides end
+	local groups, overrides, unassigned = {}, {}, {}
+	if not CurrentBuffs then return groups, overrides, unassigned end
 
 	local petsMerged = classAssignment(9) ~= nil and classAssignment(9) == classAssignment(0)
 
@@ -283,6 +342,8 @@ local function collect(includeDead)
 				for _, m in ipairs(group.plain) do
 					table.insert(overrides, { unit = m.unit, name = m.name, class = m.class, blessing = g, spell = smallSpell(g), stats = m.stats, dead = m.dead })
 				end
+			else
+				for _, m in ipairs(group.plain) do table.insert(unassigned, m) end
 			end
 		end
 	end
@@ -292,7 +353,7 @@ local function collect(includeDead)
 		if a.hasOverrides ~= b.hasOverrides then return a.hasOverrides end
 		return a.class < b.class
 	end)
-	return groups, overrides
+	return groups, overrides, unassigned
 end
 
 
@@ -379,7 +440,8 @@ end
 -- Try the Greater Blessing for one group. Returns "cast", "gcd", or nil plus a note.
 -- dry = preview only: no spell on the cursor, distance-based range, no side effects;
 -- returns "cast" with the target it would pick.
-local function tryGroup(group, force, dry)
+-- overExisting (Shift): cast even when nobody needs it (refresh, or over the same blessing).
+local function tryGroup(group, force, dry, overExisting)
 	local g, c = group.blessing, group.class
 	local left = timeLeft("cast", g .. c)
 
@@ -387,11 +449,11 @@ local function tryGroup(group, force, dry)
 
 	local needing = {}
 	for _, m in ipairs(group.plain) do
-		if needs(m.stats[g], memberLeft(left, g, m.name, m.unit)) then
+		if memberNeeds(g, m, memberLeft(left, g, m.name, m.unit)) then
 			table.insert(needing, m)
 		end
 	end
-	if table.getn(needing) == 0 then return nil end
+	if table.getn(needing) == 0 and not overExisting then return nil end
 
 	local reach
 	if dry then
@@ -442,7 +504,8 @@ local function tryGroup(group, force, dry)
 	end
 
 	if dry then
-		return "cast", nil, { group = group, class = c, blessing = g, text = string.format("Greater %s -> %s", blessingName(g), className(c)) }
+		return "cast", nil, { group = group, class = c, blessing = g, target = target.name,
+			text = string.format("Greater %s -> %s", blessingName(g), className(c)) }
 	end
 
 	SpellTargetUnit(target.unit)
@@ -476,7 +539,7 @@ local function tryGroup(group, force, dry)
 end
 
 local function tryOverride(o, dry, anyway)
-	local key = "O" .. o.name
+	local key = "O" .. o.name .. ":" .. o.blessing  -- per blessing: a changed assignment isn't held back
 	if recentlyCast(key) then return nil end
 	if not anyway and not needs(o.stats[o.blessing], overrideLeft(o)) then return nil end
 	if anyway and o.dead then return nil end
@@ -486,7 +549,8 @@ local function tryOverride(o, dry, anyway)
 		if not inRangePreview(o.unit, BLESSING_RANGE) then
 			return nil, string.format("%s (%s): out of range or sight.", blessingName(o.blessing), o.name)
 		end
-		return "cast", nil, { override = o, class = o.class, blessing = o.blessing, text = string.format("%s -> %s", blessingName(o.blessing), o.name) }
+		return "cast", nil, { override = o, class = o.class, blessing = o.blessing, target = o.name,
+			text = string.format("%s -> %s", blessingName(o.blessing), o.name) }
 	end
 
 	if onCooldown(o.spell) then return "gcd" end
@@ -508,16 +572,23 @@ end
 -- Right-click fallback: the normal (single-target) version of a group's blessing on one member
 -- who'd otherwise get the Greater Blessing (no override) and is missing it. Only when the
 -- blessing is missing - a member who has the Greater one isn't touched.
-local function tryNormal(group, m, anyway)
+-- dry = preview only, like tryOverride's.
+local function tryNormal(group, m, anyway, dry)
 	local g = group.blessing
 	local spell = smallSpell(g)
 	if not spell then return nil end
-	local key = "N" .. m.name
+	local key = "N" .. m.name .. ":" .. g
 	if recentlyCast(key) or recentlyCast("G" .. g .. ":" .. group.class) then return nil end
 	if m.dead or (m.stats[g] and not anyway) then return nil end
 	local refresh = m.stats[g]
 	if salvationOnTank(m.unit, g) then return nil end
 	if not UnitIsVisible(m.unit) then return nil end
+
+	if dry then
+		if not inRangePreview(m.unit, BLESSING_RANGE) then return nil end
+		return "cast", nil, { group = group, class = group.class, blessing = g, target = m.name,
+			text = string.format("%s -> %s", blessingName(g), m.name) }
+	end
 
 	if onCooldown(spell) then return "gcd" end
 
@@ -537,22 +608,47 @@ local function tryNormal(group, m, anyway)
 	return "cast"
 end
 
+-- Right-click order: overrides first (of onlyGroup's class when one is given), then unless
+-- overridesOnly the normal blessing on members who'd otherwise get the Greater one (only
+-- onlyGroup's). anyway (Shift): also refreshes, so both lists go missing first, then
+-- unknown time, then lowest time. Returns { {o=} | {group=, m=} } in the order to try them.
+local function rightClickPlan(groups, overrides, onlyGroup, overridesOnly, anyway)
+	local function sortKey(has, left)
+		if not has then return -2 end
+		return left or -1
+	end
+	local plan = {}
+	local cls = onlyGroup and onlyGroup.class
+	local olist = {}
+	for _, o in ipairs(overrides) do
+		if not cls or o.class == cls or (cls == 0 and o.class == 9) then
+			table.insert(olist, { o = o, key = sortKey(o.stats[o.blessing], overrideLeft(o)) })
+		end
+	end
+	if anyway then table.sort(olist, function(a, b) return a.key < b.key end) end
+	for _, e in ipairs(olist) do table.insert(plan, e) end
+	if not overridesOnly then
+		local mlist = {}
+		for _, group in ipairs(groups) do
+			if not onlyGroup or group.class == onlyGroup.class then
+				local left = timeLeft("cast", group.blessing .. group.class)
+				for _, m in ipairs(group.plain) do
+					table.insert(mlist, { group = group, m = m,
+						key = sortKey(m.stats[group.blessing], memberLeft(left, group.blessing, m.name, m.unit)) })
+				end
+			end
+		end
+		if anyway then table.sort(mlist, function(a, b) return a.key < b.key end) end
+		for _, e in ipairs(mlist) do table.insert(plan, e) end
+	end
+	return plan
+end
+
 ------------------------------------------------------------------------------
 -- Personal passives: your aura (when one is assigned to you in PallyPower) and Righteous Fury
 -- (when PallyPower's Righteous Fury button is enabled and you know it). Cast on yourself,
 -- always before any blessing when one is missing.
 ------------------------------------------------------------------------------
-
-local function ppIconPrefix()
-	if PP_PerUser and PP_PerUser.usehdicons == true then return "AddOns\\PallyPowerTW\\HD" end
-	return "AddOns\\PallyPowerTW\\"
-end
-
--- PallyPower's icon path -> the texture path UnitBuff returns.
-local function buffTexture(path)
-	if not path then return nil end
-	return (string.gsub(path, ppIconPrefix(), ""))
-end
 
 local function playerHasBuff(path)
 	local want = buffTexture(path)
@@ -603,7 +699,7 @@ local function personalList()
 end
 
 local function tryPersonal(pp, dry)
-	if pp.has or recentlyCast("P" .. pp.kind) then return nil end
+	if pp.has or recentlyCast("P" .. pp.kind .. ":" .. (pp.spell or "")) then return nil end
 	if dry then
 		return "cast", nil, { personal = true, text = pp.name }
 	end
@@ -617,7 +713,7 @@ local function tryPersonal(pp, dry)
 		SpellStopTargeting()
 		return nil
 	end
-	markCast("P" .. pp.kind)
+	markCast("P" .. pp.kind .. ":" .. (pp.spell or ""))
 	feedback(pp.name, OK_R, OK_G, OK_B)
 	return "cast"
 end
@@ -691,7 +787,7 @@ local function doNext(button)
 
 	local force = IsShiftKeyDown()  -- "cast anyway"
 	local rightClick = (button == "RightButton")
-	local overridesOnly = rightClick
+	local overridesOnly = false
 	local groups, overrides = collect()
 	local note
 
@@ -701,11 +797,26 @@ local function doNext(button)
 		return
 	end
 
-	-- Personal passives: first on a plain left-click, or the only thing when that step is
-	-- picked on the wheel / shown on the button (right-click).
-	local personalOnly = (selectedKey == "personal")
-		or (rightClick and not selectedKey and status.subject and status.subject.personal)
-	if personalOnly or (not rightClick and not selectedKey) then
+	-- Every click works on what the button shows (the next step, or the one picked with the
+	-- wheel): your personal passives, one Greater Blessing group, or the overrides. Only when
+	-- it shows nothing does a left-click go through everything in order.
+	local subj = status.subject
+	local onlyGroup, personalOnly
+	if subj and subj.personal then
+		personalOnly = true
+	elseif subj and subj.group then
+		for _, group in ipairs(groups) do
+			if group.class == subj.group.class then onlyGroup = group end
+		end
+		if not onlyGroup then
+			feedback(string.format("Greater %s (%s): nobody alive to bless.", blessingName(subj.group.blessing), className(subj.group.class)), NOTE_R, NOTE_G, NOTE_B)
+			return
+		end
+	elseif subj and (subj.override or subj.individual) then
+		overridesOnly = true
+	end
+
+	if personalOnly or not subj then
 		for _, pp in ipairs(personal) do
 			local r = tryPersonal(pp)
 			if r then return end
@@ -716,84 +827,29 @@ local function doNext(button)
 		end
 	end
 
-	-- A wheel-selected step narrows the click to that group / the overrides.
-	local onlyGroup
-	if selectedKey == "ind" then
-		overridesOnly = true
-	elseif selectedKey and selectedKey ~= "personal" then
-		for _, group in ipairs(groups) do
-			if group.class == selectedKey then onlyGroup = group end
-		end
-		if not onlyGroup then selectedKey = nil end  -- that group is gone
-	end
-
-	-- Right-click without a wheel pick: work on what the button shows - that group (its
-	-- overrides first, then its members), or the overrides when it shows an override.
-	local rcOverridesOnly = (selectedKey == "ind")
-	if rightClick and not selectedKey and status.subject then
-		local subj = status.subject
-		if subj.group then
-			for _, group in ipairs(groups) do
-				if group.class == subj.group.class then onlyGroup = group end
-			end
-		elseif subj.override or subj.individual then
-			rcOverridesOnly = true
-		end
-	end
-
 	beginCasting()
 
 	local result, n
 	if rightClick then
-		-- Right-click: overrides first, then (unless the overrides step is picked) the normal
-		-- blessing on members who'd otherwise get the Greater one and are missing it.
-		-- With a group picked on the wheel, only that class.
-		-- Shift: "cast anyway" - also refresh blessings that are still on, starting with the
-		-- one that runs out first (missing first, then unknown time, then lowest time).
+		-- Right-click: overrides first (of the group shown), then the normal blessing on
+		-- members who'd otherwise get the Greater one and are missing it - not when the button
+		-- shows the overrides. Shift: "cast anyway" - also refresh blessings that are still
+		-- on, starting with the one that runs out first (missing first, then unknown time,
+		-- then lowest time).
 		local anyway = IsShiftKeyDown()
-		local function sortKey(has, left)
-			if not has then return -2 end
-			return left or -1
-		end
-		local cls = onlyGroup and onlyGroup.class
-		local olist = {}
-		for _, o in ipairs(overrides) do
-			if not cls or o.class == cls or (cls == 0 and o.class == 9) then
-				table.insert(olist, o)
+		for _, e in ipairs(rightClickPlan(groups, overrides, onlyGroup, overridesOnly, anyway)) do
+			if e.o then
+				result, n = tryOverride(e.o, nil, anyway)
+			else
+				result, n = tryNormal(e.group, e.m, anyway)
 			end
-		end
-		if anyway then
-			table.sort(olist, function(a, b)
-				return sortKey(a.stats[a.blessing], overrideLeft(a)) < sortKey(b.stats[b.blessing], overrideLeft(b))
-			end)
-		end
-		for _, o in ipairs(olist) do
-			result, n = tryOverride(o, nil, anyway)
 			note = note or n
 			if result then break end
 		end
-		if not result and not rcOverridesOnly then
-			local mlist = {}
-			for _, group in ipairs(groups) do
-				if not onlyGroup or group == onlyGroup then
-					local left = timeLeft("cast", group.blessing .. group.class)
-					for _, m in ipairs(group.plain) do
-						table.insert(mlist, { group = group, m = m,
-							key = sortKey(m.stats[group.blessing], memberLeft(left, group.blessing, m.name, m.unit)) })
-					end
-				end
-			end
-			if anyway then
-				table.sort(mlist, function(a, b) return a.key < b.key end)
-			end
-			for _, e in ipairs(mlist) do
-				result, n = tryNormal(e.group, e.m, anyway)
-				note = note or n
-				if result then break end
-			end
-		end
 	elseif onlyGroup then
-		result, note = tryGroup(onlyGroup, force)
+		-- Shift: cast anyway - past anyone out of range / sight / not here, and even when the
+		-- members already have the blessing (refresh, or replace normal versions).
+		result, note = tryGroup(onlyGroup, force, nil, force)
 	else
 		if not overridesOnly then
 			for _, group in ipairs(groups) do
@@ -820,7 +876,7 @@ local function doNext(button)
 	elseif onlyGroup and not rightClick then
 		feedback(string.format("Greater %s (%s) is up.", blessingName(onlyGroup.blessing), className(onlyGroup.class)), NOTE_R, NOTE_G, NOTE_B)
 	elseif rightClick then
-		feedback(rcOverridesOnly and "All overrides are up." or "Nobody is missing a blessing.", NOTE_R, NOTE_G, NOTE_B)
+		feedback(overridesOnly and "All overrides are up." or "Nobody is missing a blessing.", NOTE_R, NOTE_G, NOTE_B)
 	else
 		feedback(overridesOnly and "All overrides are up." or "All blessings are up.", NOTE_R, NOTE_G, NOTE_B)
 	end
@@ -860,14 +916,10 @@ local function attachToBuffBar()
 	if PPNext_Settings.below and title then
 		button:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 5, -2)  -- "below" layout: under the title (grows down/right)
 	else
-		button:SetPoint("BOTTOMLEFT", bar, "TOPLEFT", 5, 2)    -- default: on top of the bar (grows up/right)
+		button:SetPoint("BOTTOMLEFT", bar, "TOPLEFT", 5, 2)    -- below layout off: on top of the bar (grows up/right)
 	end
 	return true
 end
-
-button:SetScript("OnClick", function()
-	doNext(arg1)
-end)
 
 
 -- Status, from PallyPower's buff scan and timers only (no range checks: those need a spell on
@@ -903,7 +955,11 @@ local function computeStatus()
 			for _, m in ipairs(group.plain) do
 				if UnitIsVisible(m.unit) and not salvationOnTank(m.unit, g) then
 					local before = s.minLeft
-					track(m.stats[g], memberLeft(left, g, m.name, m.unit), c, g, m.dead)
+					local mleft = memberLeft(left, g, m.name, m.unit)
+					-- only the normal version and no known time: covered, not "unknown"
+					if not (mleft == nil and m.stats[g] and normalOnly(m.unit, g)) then
+						track(m.stats[g], mleft, c, g, m.dead)
+					end
 					if s.minLeft ~= before then s.minSubject = { group = group } end
 				end
 			end
@@ -991,6 +1047,80 @@ local function computeStatus()
 				if o.stats[o.blessing] then s.subjectHas = true end
 			end
 		end
+
+		-- What a click on this page does, with the modifiers held now. Left-click (leftNext):
+		-- on a group, the Greater Blessing and the member it's cast on; on the overrides, the
+		-- first one in reach. Right-click (rightNext) is worked out when a left-click can't do
+		-- anything here, or while Shift is held (both lines are shown then). ">" marks the
+		-- left-click target, else the right-click one.
+		local shift = IsShiftKeyDown()
+		s.shift = shift
+		local cgroups, coverrides = collect()  -- living members only, as a click sees them
+		local onlyGroup
+		if subj and subj.group then
+			for _, group in ipairs(cgroups) do
+				if group.class == subj.group.class then onlyGroup = group end
+			end
+		end
+		if onlyGroup then
+			local r, _, info = tryGroup(onlyGroup, shift, true, shift)
+			if r then
+				s.leftNext, s.markName = info, info.target
+				info.text = info.text .. " (" .. info.target .. ")"
+			end
+		elseif subj and (subj.override or subj.individual) then
+			for _, o in ipairs(coverrides) do
+				local r, _, info = tryOverride(o, true)
+				if r then s.leftNext, s.markName = info, info.target; break end
+			end
+		elseif subj and subj.personal then
+			for _, pp in ipairs(personalList()) do
+				local r, _, info = tryPersonal(pp, true)
+				if r then s.leftNext = info; break end
+			end
+		end
+		if subj and not subj.personal and (shift or not s.leftNext) then
+			if subj.group and not onlyGroup then
+				-- nobody alive in that group: nothing to right-click
+			else
+				for _, e in ipairs(rightClickPlan(cgroups, coverrides, onlyGroup, not subj.group, shift)) do
+					local r, info, _
+					if e.o then
+						r, _, info = tryOverride(e.o, true, shift)
+					else
+						r, _, info = tryNormal(e.group, e.m, shift, true)
+					end
+					if r then
+						s.rightNext = info
+						if not s.markName then s.markName = info.target end
+						break
+					end
+				end
+			end
+		end
+
+		-- Totals over everyone in the group or raid: one category per player, for your
+		-- blessing on them.
+		local t = {}
+		local function count(k) t[k] = (t[k] or 0) + 1 end
+		local function tally(unit, dead, has, blessing, yards)
+			if dead then return count("Dead") end
+			if has then return count("Applied") end
+			if salvationOnTank(unit, blessing) then return count("Tank") end
+			local st = unitStatus(unit, false, yards)
+			count(st == "OK" and "Missing" or st)
+		end
+		local agroups, aoverrides, unassigned = collect(true)
+		for _, group in ipairs(agroups) do
+			for _, m in ipairs(group.plain) do
+				tally(m.unit, m.dead, m.stats[group.blessing], group.blessing, GREATER_RANGE)
+			end
+		end
+		for _, o in ipairs(aoverrides) do
+			tally(o.unit, o.dead, o.stats[o.blessing], o.blessing, BLESSING_RANGE)
+		end
+		for _ in ipairs(unassigned) do count("No config") end
+		s.totals = t
 	end
 	return s
 end
@@ -1001,6 +1131,11 @@ end
 ------------------------------------------------------------------------------
 
 local LIST_LINE = 12
+-- Two markers: STEP_MARK on a tooltip section header = the step the button is on (the group
+-- or list it shows, also after a mouse-wheel pick); TARGET_MARK on a player row (button list
+-- and tooltip) = who the next click is cast on.
+local STEP_MARK = "|cffe6cc80->|r "
+local TARGET_MARK = "|cff8ccf8c>|r "
 local STATUS_COLOR = {
 	["OK"]       = { 0.55, 0.80, 0.55 },
 	["OOR"]      = { 0.82, 0.55, 0.55 },
@@ -1010,13 +1145,27 @@ local STATUS_COLOR = {
 	["Tank"]     = { 0.60, 0.60, 0.60 },  -- Salvation is never cast on PallyPower-marked tanks
 }
 
+-- Totals line (top of the button and the tooltip): label order and colours (statuses as above; "missing" as in
+-- the time column). Categories with 0 aren't shown.
+local TOTALS = {
+	{ "Applied",   0.55, 0.80, 0.55 },
+	{ "Missing",   0.82, 0.54, 0.54 },
+	{ "OOR" },
+	{ "LOS" },
+	{ "Not Here" },
+	{ "Dead" },
+	{ "Tank" },
+	{ "No config", 0.60, 0.60, 0.60 },
+}
+local RIGHT_R, RIGHT_G, RIGHT_B = 0.62, 0.72, 0.85   -- right-click line (muted blue)
+
 -- The button shows the same "page" as the tooltip does for the group / player it's on:
---   header:  [class][blessing] Greater Might - Paladin          6:22
+--   header:  [class][blessing] G. Might - Paladin               6:22
 --   rows:    Kael  6:22                                           OK
 --            Velandra -> [Light] 6:03                             OK    (overrides)
--- but only your assigned blessing per player (the tooltip also lists other paladins'
--- blessings). The button grows taller with the rows; its width is constant. The list
--- doesn't take the mouse, so clicks, wheel and tooltip all go to the button.
+-- but only your assigned blessing per player (the tooltip can also list their other blessing
+-- types: the "others" setting). The button grows taller with the rows; its width is
+-- constant. The list doesn't take the mouse, so clicks, wheel and tooltip all go to the button.
 local BUTTON_W = 180                 -- constant width (the template is 100); long names are cut off
 local STATUS_W = 44                  -- right-hand status column
 local TIME_W = 44                    -- time-left column
@@ -1037,7 +1186,7 @@ countText:Hide()
 
 -- the template's time text becomes the header's right column
 timeText:ClearAllPoints()
-timeText:SetPoint("TOPRIGHT", button, "TOPRIGHT", -6, -3)
+timeText:SetPoint("TOPRIGHT", list, "TOPRIGHT", -6, -3)  -- moves down with the list under the totals
 timeText:SetWidth(60)
 timeText:SetHeight(LIST_LINE)
 
@@ -1073,6 +1222,91 @@ colHead:SetHeight(LIST_LINE)
 colHead:SetTextColor(0.6, 0.6, 0.6)
 colHead:SetText("Can cast?")
 colHead:Hide()
+
+-- "Shift-click: G. Might -> Warrior (Kael)" under the rows while Shift is held
+local leftLine = list:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+leftLine:SetJustifyH("LEFT")
+leftLine:SetWidth(BUTTON_W - 12)
+leftLine:SetHeight(LIST_LINE)
+leftLine:Hide()
+
+-- "Right-click: Might -> Kael" under the rows, when a left-click can't do anything here (or
+-- while Shift is held)
+local rightLine = list:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+rightLine:SetJustifyH("LEFT")
+rightLine:SetWidth(BUTTON_W - 12)
+rightLine:SetHeight(LIST_LINE)
+rightLine:SetTextColor(RIGHT_R, RIGHT_G, RIGHT_B)
+rightLine:Hide()
+
+-- Totals: "Applied (6)  OOR (3)  Dead (1) ...", wrapped over as many lines as needed, only
+-- between categories. The lines get no width, so the game never wraps one by itself (which
+-- could split "Not Here (1)"); totalsLines decides what goes on each line.
+-- They sit in their own strip at the top of the button, with a thin line under them; the
+-- list (header, rows, right-click line) is moved down below it.
+local totalsFrame = CreateFrame("Frame", nil, button)
+totalsFrame:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+totalsFrame:SetWidth(BUTTON_W)
+totalsFrame:SetHeight(1)
+totalsFrame:EnableMouse(false)
+local totalsSep = totalsFrame:CreateTexture(nil, "OVERLAY")
+totalsSep:SetTexture(0.6, 0.6, 0.6, 0.35)
+totalsSep:SetHeight(1)
+totalsSep:Hide()
+
+local totalsFS = {}
+local function totalsLine(i)
+	if not totalsFS[i] then
+		local fs = totalsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		fs:SetJustifyH("LEFT")
+		totalsFS[i] = fs
+	end
+	return totalsFS[i]
+end
+
+local function colorCode(r, g, b)
+	return string.format("|cff%02x%02x%02x", math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5))
+end
+
+-- Texts of the totals lines (colour codes included), each fitting maxW pixels; with no
+-- maxW, everything on one line (the tooltip).
+local function totalsLines(totals, maxW)
+	local lines = {}
+	if not totals then return lines end
+	-- Nobody you can bless is without it (wherever they are): "All applied (n)" instead.
+	local allUp = true
+	for _, k in ipairs({ "Missing", "OOR", "LOS", "Not Here" }) do
+		if (totals[k] or 0) > 0 then allUp = false end
+	end
+	local cur, curPlain = nil, nil
+	for _, def in ipairs(TOTALS) do
+		local label = def[1]
+		local n = totals[label]
+		if n and n > 0 then
+			local r, g, b = def[2], def[3], def[4]
+			if not r then
+				local col = STATUS_COLOR[label]
+				r, g, b = col[1], col[2], col[3]
+			end
+			if label == "Applied" and allUp then label = "All applied" end
+			local plain = label .. " (" .. n .. ")"
+			local piece = colorCode(r, g, b) .. plain .. "|r"
+			if cur then
+				listMeasure:SetText(curPlain .. "  " .. plain)
+				if maxW and listMeasure:GetStringWidth() > maxW then
+					table.insert(lines, cur)
+					cur, curPlain = piece, plain
+				else
+					cur, curPlain = cur .. "  " .. piece, curPlain .. "  " .. plain
+				end
+			else
+				cur, curPlain = piece, plain
+			end
+		end
+	end
+	if cur then table.insert(lines, cur) end
+	return lines
+end
 
 local listRows = {}
 local function listRow(i)
@@ -1120,6 +1354,7 @@ end
 -- "missing" (muted red). In a Greater Blessing group, a time that matches the group's time
 -- (in the header) isn't repeated: it's left blank.
 local SAME_TIME = 3  -- seconds
+local SINGLE_TEXT = "|cffd8c890single|r"  -- has only the normal version (Shift + left-click upgrades it)
 local function assignedText(has, left, headerLeft)
 	if not has then return "|cffd08a8amissing|r" end
 	if left and headerLeft and math.abs(left - headerLeft) < SAME_TIME then return "" end
@@ -1155,14 +1390,15 @@ local function listEntries(subject)
 		local anyHas = false
 		local headerLeft = groupLeft(grp)
 		page.icons = { PallyPower_ClassTexture and PallyPower_ClassTexture[c], BlessingIcon and BlessingIcon[g] }
-		page.text = string.format("Greater %s - %s", blessingName(g), className(c))
+		page.text = string.format("G. %s - %s", blessingName(g), className(c))  -- "G." = Greater (short, the button is narrow)
 		for _, m in ipairs(grp.plain) do
 			if m.stats[g] then anyHas = true end
 			local mleft = memberLeft(left, g, m.name, m.unit)
 			local st = salvationOnTank(m.unit, g) and "Tank" or unitStatus(m.unit, m.dead, GREATER_RANGE)
-			table.insert(page.rows, { unit = m.unit, sortName = m.name,
-				text = m.name, time = assignedText(m.stats[g], mleft, headerLeft),
-				status = st, needed = needs(m.stats[g], mleft) })
+			local single = m.stats[g] and normalOnly(m.unit, g)
+			table.insert(page.rows, { unit = m.unit, sortName = m.name, name = m.name,
+				text = m.name, time = single and SINGLE_TEXT or assignedText(m.stats[g], mleft, headerLeft),
+				status = st, needed = memberNeeds(g, m, mleft) })
 		end
 		table.sort(page.rows, function(x, y) return x.sortName < y.sortName end)
 		page.right = timeLabel(headerLeft, anyHas)
@@ -1173,7 +1409,7 @@ local function listEntries(subject)
 		for _, o in ipairs(overrides) do
 			local oleft = overrideLeft(o)
 			local st = salvationOnTank(o.unit, o.blessing) and "Tank" or unitStatus(o.unit, o.dead, BLESSING_RANGE)
-			table.insert(page.rows, { unit = o.unit,
+			table.insert(page.rows, { unit = o.unit, name = o.name,
 				text = o.name, icon = BlessingIcon and BlessingIcon[o.blessing],
 				time = assignedText(o.stats[o.blessing], oleft),
 				status = st, needed = needs(o.stats[o.blessing], oleft) })
@@ -1230,7 +1466,11 @@ local function refreshList()
 			row.icon:Hide()
 		end
 		row.text:SetWidth(nameW)
-		row.text:SetText(r.text)
+		if r.name and r.name == status.markName then
+			row.text:SetText(TARGET_MARK .. r.text)
+		else
+			row.text:SetText(r.text)
+		end
 		row.after:SetText(r.time or "")
 		row.after:Show()
 		if r.needed then
@@ -1254,10 +1494,65 @@ local function refreshList()
 
 	local nrows = table.getn(page.rows)
 	if nrows > 0 then colHead:Show() else colHead:Hide() end
-	local h = HEADER_H + (nrows > 0 and (COLHEAD_H + nrows * LIST_LINE + 4) or 0)
+	local y = HEADER_H + (nrows > 0 and (COLHEAD_H + nrows * LIST_LINE + 2) or 0)
+
+	-- click lines: with Shift held, what Shift-click and Shift-right-click do here; without,
+	-- the right-click line only when a left-click can't do anything on this page
+	if status.shift then
+		leftLine:ClearAllPoints()
+		leftLine:SetPoint("TOPLEFT", list, "TOPLEFT", 6, -y)
+		if status.leftNext then
+			leftLine:SetText("Shift-click: " .. (string.gsub(status.leftNext.text, "^Greater ", "G. ")))
+			leftLine:SetTextColor(OK_R, OK_G, OK_B)
+		else
+			leftLine:SetText("Shift-click: nothing to cast here")
+			leftLine:SetTextColor(0.6, 0.6, 0.6)
+		end
+		leftLine:Show()
+		y = y + LIST_LINE
+	else
+		leftLine:Hide()
+	end
+	if status.rightNext then
+		rightLine:ClearAllPoints()
+		rightLine:SetPoint("TOPLEFT", list, "TOPLEFT", 6, -y)
+		rightLine:SetText((status.shift and "Shift-right: " or "Right-click: ") .. status.rightNext.text)
+		rightLine:Show()
+		y = y + LIST_LINE
+	else
+		rightLine:Hide()
+	end
+
+	local listH = (y == HEADER_H) and HEADER_H or (y + 3)
+
+	-- totals at the top, wrapped to the button's width, then a thin line; the list goes below
+	local tlines = totalsLines(status.totals, BUTTON_W - 12 - 2)  -- a little slack for rounding
+	local top = 0
+	for i, text in ipairs(tlines) do
+		local fs = totalsLine(i)
+		fs:ClearAllPoints()
+		fs:SetPoint("TOPLEFT", totalsFrame, "TOPLEFT", 6, -3 - (i - 1) * LIST_LINE)
+		fs:SetText(text)
+		fs:Show()
+	end
+	for i = table.getn(tlines) + 1, table.getn(totalsFS) do totalsFS[i]:Hide() end
+	if table.getn(tlines) > 0 then
+		local sepY = 3 + table.getn(tlines) * LIST_LINE + 1
+		totalsSep:ClearAllPoints()
+		totalsSep:SetPoint("TOPLEFT", totalsFrame, "TOPLEFT", 6, -sepY)
+		totalsSep:SetPoint("TOPRIGHT", totalsFrame, "TOPRIGHT", -6, -sepY)
+		totalsSep:Show()
+		top = sepY + 1
+	else
+		totalsSep:Hide()
+	end
+	totalsFrame:SetHeight(math.max(top, 1))
+
+	list:ClearAllPoints()
+	list:SetPoint("TOPLEFT", button, "TOPLEFT", 0, -top)
 	list:SetWidth(BUTTON_W)
-	list:SetHeight(h)
-	setButtonSize(BUTTON_W, h)
+	list:SetHeight(listH)
+	setButtonSize(BUTTON_W, top + listH)
 end
 
 -- Cast detection: blessings cast some other way (spellbook, macro, keybind...) have no timer
@@ -1337,14 +1632,17 @@ local function refreshButton()
 end
 
 local HELP = {
+	"Every click works on what the button shows.",
 	"Left-click: your aura / Righteous Fury first when missing (as set",
 	"   up in PallyPower), then the next missing blessing",
 	"   (or one whose time left PallyPower doesn't know).",
 	"   Greater Blessings first (classes with overrides first),",
 	"   then your individual overrides.",
 	"   Low time left only shows on the button (yellow + time).",
-	"Shift: cast Greater Blessings anyway, even if some of the",
-	"   class is not here, out of range or out of line of sight.",
+	"Shift: cast the Greater Blessing shown anyway, even if some of",
+	"   the class is not here, out of range or out of line of sight,",
+	"   or everyone already has it: refreshes it, and upgrades",
+	"   members who only have the normal version (\"single\").",
 	"Right-click: overrides first, then the normal (single) blessing",
 	"   on one member missing their Greater Blessing per click.",
 	"Shift+right-click: cast anyway - also refresh blessings that are",
@@ -1354,16 +1652,23 @@ local HELP = {
 	"List in the button: who the next click is about -",
 	"   OK, OOR (range), LOS (line of sight), Dead, Not Here.",
 	"   Grey names already have it.   /ppnext list toggles it.",
+	"   > marks who the click is cast on. When a left-click can't",
+	"   do anything there, a line shows what a right-click would do.",
+	"   Holding Shift shows what Shift-click and Shift-right-click do.",
+	"Totals line: everyone you bless - Applied, Missing (in reach),",
+	"   OOR, LOS, Not Here, Dead, Tank, No config (nothing assigned).",
 	"PallyPower's buttons stay hidden until you mouse over the",
 	"   \"Pally Buffs\" title.   /ppnext collapse toggles it.",
-	"/ppnext below: this button under the title, bar grows upwards.",
-	"/ppnext opacity 10-100: fade the bar out of combat (100 = off);",
+	"/ppnext below: this button under the title, bar grows up (default).",
+	"/ppnext opacity 10-100: fade the bar out of combat (100 = off, 70 default);",
 	"   fully visible in combat and while the mouse is over it.",
+	"/ppnext others: other blessing types in the tooltip (off) -",
+	"   blessings on a player besides the one you give them.",
+	"Settings explain themselves on mouseover (Tooltips setting).",
 	"Moves with PallyPower's buff bar.   /ppnext for options.",
 }
 
 local HEAD_R, HEAD_G, HEAD_B = 0.90, 0.80, 0.50
-local NEXT_MARK = "|cff8ccf8c>|r "
 
 ------------------------------------------------------------------------------
 -- Tooltip icons. 1.12 tooltips can't show textures inside their text, so small textures are
@@ -1524,9 +1829,11 @@ local function assignedTimeText(unit, stats, b, left, headerLeft)
 	return assignedText(stats[b], auraLeft(unit, b) or left, headerLeft)
 end
 
--- Other paladin blessings on the player (not the assigned one), with time left.
+-- The player's other blessing types (not the one you're assigned to give them, which has its
+-- own column whoever cast it), with time left.
 local function otherBlessings(unit, stats, assigned)
 	local list = {}
+	if PPNext_Settings.others ~= true then return list end  -- setting, off by default
 	for b = 0, 5 do
 		if b ~= assigned and stats[b] then
 			local left = auraLeft(unit, b)
@@ -1630,32 +1937,42 @@ end
 
 
 -- Everyone, in the order the button works through them: Greater Blessing groups (classes with
--- overrides first), then overrides. ">" marks what the next click does.
+-- overrides first), then overrides. "->" on a header marks the step the button is on, ">" on
+-- a row the player the next click is cast on (both as on the button).
 local function showTooltip()
 	hideTipIcons()
 	tipPending = {}
 	tipRowsPending = {}
 	GameTooltip:SetOwner(button, "ANCHOR_TOPLEFT")
 	GameTooltip:SetText("PallyPower Next Blessing")
+	for _, line in ipairs(totalsLines(status.totals)) do
+		GameTooltip:AddLine(line, 1, 1, 1)
+	end
 
-	local nxt = status.next
 	local sel = status.selected
 	if sel then
-		local what = sel.group
-			and string.format("Greater %s - %s", blessingName(sel.group.blessing), className(sel.group.class))
-			or "Individual overrides"
+		local what = "Individual overrides"
+		if sel.personal then
+			what = "Personal"
+		elseif sel.group then
+			what = string.format("G. %s - %s", blessingName(sel.group.blessing), className(sel.group.class))
+		end
 		GameTooltip:AddLine(string.format("Selected (%d/%d): %s", status.selIndex, status.selCount, what), 0.62, 0.72, 0.85)
-		nxt = nil  -- mark the selection instead of the next action
-	elseif nxt then
-		GameTooltip:AddLine("Next click: " .. nxt.text, OK_R, OK_G, OK_B)
-	elseif status.blocked then
+	end
+	if status.leftNext then
+		GameTooltip:AddLine((status.shift and "Shift-click: " or "Next click: ") .. status.leftNext.text, OK_R, OK_G, OK_B)
+	elseif status.shift then
+		GameTooltip:AddLine("Shift-click: nothing to cast here", 0.6, 0.6, 0.6)
+	elseif not sel and status.blocked then
 		GameTooltip:AddLine(status.blocked, 0.82, 0.55, 0.55, 1)
-	elseif status.missing == 0 and status.unknown == 0 then
-		GameTooltip:AddLine("All blessings are up.", 0.75, 0.75, 0.75)
+	end  -- all up: the totals line above says "All applied"
+	if status.rightNext then
+		GameTooltip:AddLine((status.shift and "Shift-right: " or "Right-click: ") .. status.rightNext.text, RIGHT_R, RIGHT_G, RIGHT_B)
 	end
 
 	if AllPallys and AllPallys[me()] and CurrentBuffs and PallyPower_Assignments then
 		local groups, overrides = collect(true)
+		local curStep = stepKey(status.subject)  -- same page the button shows
 		local lines = {}
 		table.insert(lines, { kind = "blank" })
 		table.insert(lines, { kind = "text", text = " ", right = "Can cast?",
@@ -1665,7 +1982,7 @@ local function showTooltip()
 		local plist = personalList()
 		if table.getn(plist) > 0 then
 			firstSection = false
-			local pmark = ((nxt and nxt.personal) or (sel and sel.personal)) and NEXT_MARK or ""
+			local pmark = (curStep == "personal") and STEP_MARK or ""
 			table.insert(lines, { kind = "text", text = pmark .. "Personal", r = HEAD_R, g = HEAD_G, b = HEAD_B })
 			for _, pp in ipairs(plist) do
 				local t
@@ -1685,7 +2002,7 @@ local function showTooltip()
 			local g, c = group.blessing, group.class
 			if table.getn(group.plain) > 0 then
 				local left = timeLeft("cast", g .. c)
-				local mark = ((nxt and nxt.group and nxt.group.class == c) or (sel and selectedKey == c)) and NEXT_MARK or ""
+				local mark = (curStep == c) and STEP_MARK or ""
 				if not firstSection then table.insert(lines, { kind = "blank" }) end
 				firstSection = false
 				local anyHas = false
@@ -1693,19 +2010,21 @@ local function showTooltip()
 					if m.stats[g] then anyHas = true end
 				end
 				local headerLeft = groupLeft(group)
-				-- header: [class][blessing] Greater Might - Paladin
+				-- header: [class][blessing] G. Might - Paladin
 				table.insert(lines, { kind = "header",
 					segs = { mark, { icon = PallyPower_ClassTexture and PallyPower_ClassTexture[c] },
-						{ icon = blessingIcon(g) }, " " .. string.format("Greater %s - %s", blessingName(g), className(c)) },
+						{ icon = blessingIcon(g) }, " " .. string.format("G. %s - %s", blessingName(g), className(c)) },
 					right = timeLabel(headerLeft, anyHas),
 					r = HEAD_R, g = HEAD_G, b = HEAD_B, rr = 0.8, rg = 0.8, rb = 0.8 })
 				table.sort(group.plain, function(x, y) return x.name < y.name end)
 				for _, m in ipairs(group.plain) do
 					local st = salvationOnTank(m.unit, g) and "Tank" or unitStatus(m.unit, m.dead, GREATER_RANGE)
 					local mleft = memberLeft(left, g, m.name, m.unit)
-					local r, gg, b, sr, sg, sb = lineColors(m.unit, needs(m.stats[g], mleft), st)
-					table.insert(lines, { kind = "row", name = "   " .. m.name,
-						time = assignedTimeText(m.unit, m.stats, g, mleft, headerLeft),
+					local r, gg, b, sr, sg, sb = lineColors(m.unit, memberNeeds(g, m, mleft), st)
+					local single = m.stats[g] and normalOnly(m.unit, g)
+					local tmark = (m.name == status.markName) and TARGET_MARK or ""
+					table.insert(lines, { kind = "row", name = "   " .. tmark .. m.name,
+						time = single and SINGLE_TEXT or assignedTimeText(m.unit, m.stats, g, mleft, headerLeft),
 						others = otherBlessings(m.unit, m.stats, g), status = st,
 						r = r, g = gg, b = b, rr = sr, rg = sg, rb = sb })
 				end
@@ -1714,14 +2033,14 @@ local function showTooltip()
 		if table.getn(overrides) > 0 then
 			if not firstSection then table.insert(lines, { kind = "blank" }) end
 			table.insert(lines, { kind = "text",
-				text = ((sel and selectedKey == "ind") and NEXT_MARK or "") .. "Individual",
+				text = ((curStep == "ind") and STEP_MARK or "") .. "Individual",
 				r = HEAD_R, g = HEAD_G, b = HEAD_B })
 			for _, o in ipairs(overrides) do
 				local left = overrideLeft(o)
-				local mark = (nxt and nxt.override and nxt.override.name == o.name) and NEXT_MARK or ""
+				local mark = (o.name == status.markName) and TARGET_MARK or ""
 				local st = salvationOnTank(o.unit, o.blessing) and "Tank" or unitStatus(o.unit, o.dead, BLESSING_RANGE)
 				local r, gg, b, sr, sg, sb = lineColors(o.unit, needs(o.stats[o.blessing], left), st)
-				table.insert(lines, { kind = "row", name = mark .. "   " .. o.name, icon = blessingIcon(o.blessing),
+				table.insert(lines, { kind = "row", name = "   " .. mark .. o.name, icon = blessingIcon(o.blessing),
 					time = assignedTimeText(o.unit, o.stats, o.blessing, left),
 					others = otherBlessings(o.unit, o.stats, o.blessing), status = st,
 					r = r, g = gg, b = b, rr = sr, rg = sg, rb = sb })
@@ -1774,9 +2093,25 @@ end)
 -- Timers: status refresh (1/s, also refreshing an open tooltip) and restoring autoSelfCast
 -- after a cast.
 local nextRefresh = 0
+local shiftWasDown = false
+
+-- Clicks work on what the button shows, so it's refreshed right after each click (on the next
+-- frame, with the tooltip): the step just cast is skipped by its recent-cast guard and the
+-- button moves on, so a quick second click doesn't hit the same step again.
+button:SetScript("OnClick", function()
+	doNext(arg1)
+	nextRefresh = 0
+end)
 local ticker = CreateFrame("Frame")
 ticker:SetScript("OnUpdate", function()
 	local now = GetTime()
+	-- Shift changes what a click does (cast anyway / refresh): show it at once, not on the
+	-- next tick.
+	local shift = IsShiftKeyDown() and true or false
+	if shift ~= shiftWasDown then
+		shiftWasDown = shift
+		nextRefresh = 0
+	end
 	if now >= nextRefresh and button:IsVisible() then
 		nextRefresh = now + 1
 		refreshButton()
@@ -1923,12 +2258,13 @@ end
 
 ------------------------------------------------------------------------------
 -- Out-of-combat opacity for the whole buff bar (PallyPower's buttons, its title, this
--- button and its list): PPNext_Settings.oocAlpha (0.1 - 1, default 1 = off). In combat,
+-- button and its list): PPNext_Settings.oocAlpha (0.1 - 1, 1 = off, default 0.7). In combat,
 -- and while the mouse is over any of it, fully opaque. Checked 10 times a second.
 ------------------------------------------------------------------------------
 
+local DEFAULT_OOC_ALPHA = 0.7
 local function oocAlpha()
-	local a = tonumber(PPNext_Settings.oocAlpha) or 1
+	local a = tonumber(PPNext_Settings.oocAlpha) or DEFAULT_OOC_ALPHA
 	if a < 0.1 then a = 0.1 end
 	if a > 1 then a = 1 end
 	return a
@@ -1971,6 +2307,12 @@ events:SetScript("OnEvent", function()
 		hookBarMoves()
 		if collapseOn() then setBarOpen(false) end
 		updateVisibility()
+		-- Below layout is on by default. First time (never set): switch to it the way the
+		-- setting does, so the title stays where it is on screen.
+		if PPNext_Settings.below == nil then
+			PPNext_Settings.below = true
+			applyLayout(true)
+		end
 	end
 	-- Also after loading screens, in case the saved frame layout put the bar back.
 	applyLayout()
@@ -1993,7 +2335,7 @@ local setters = {
 	end,
 	below = function(on)
 		if (PPNext_Settings.below and true or false) == (on and true or false) then return end
-		PPNext_Settings.below = on or nil
+		PPNext_Settings.below = on and true or false  -- false is kept: nil means "default (on)"
 		applyLayout(true)
 	end,
 	list = function(on)
@@ -2004,6 +2346,10 @@ local setters = {
 		PPNext_Settings.tooltips = on and true or false
 		if not on and GameTooltip:IsOwned(button) then GameTooltip:Hide() end
 	end,
+	others = function(on)
+		PPNext_Settings.others = on and true or false
+		if GameTooltip:IsOwned(button) then showTooltip() end
+	end,
 }
 
 local getters = {
@@ -2012,6 +2358,7 @@ local getters = {
 	below    = function() return PPNext_Settings.below and true or false end,
 	list     = function() return PPNext_Settings.list ~= false end,
 	tooltips = function() return PPNext_Settings.tooltips ~= false end,
+	others   = function() return PPNext_Settings.others == true end,
 }
 
 local function setOpacity(a)
@@ -2030,6 +2377,40 @@ end
 
 local panelRows = {}
 local opacitySlider
+
+-- Explainers on the settings controls: shown after a short delay, and only while tooltips are
+-- on (the same setting as the button's tooltip).
+local SETTING_TIP_DELAY = 0.5
+local settingTipFor, settingTipAt
+local settingTipTimer = CreateFrame("Frame")
+settingTipTimer:Hide()
+settingTipTimer:SetScript("OnUpdate", function()
+	if not settingTipFor then this:Hide() return end
+	if GetTime() < settingTipAt then return end
+	local f = settingTipFor
+	settingTipFor = nil
+	this:Hide()
+	if not MouseIsOver(f) then return end
+	GameTooltip:SetOwner(f, "ANCHOR_RIGHT")
+	GameTooltip:SetText(f.tipTitle, 1, 1, 1)
+	for _, line in ipairs(f.tipLines) do
+		GameTooltip:AddLine(line, 0.85, 0.85, 0.85, 1)
+	end
+	GameTooltip:Show()
+end)
+
+local function settingTip(f, title, lines)
+	f.tipTitle, f.tipLines = title, lines
+	f:SetScript("OnEnter", function()
+		if PPNext_Settings.tooltips == false then return end
+		settingTipFor, settingTipAt = this, GetTime() + SETTING_TIP_DELAY
+		settingTipTimer:Show()
+	end)
+	f:SetScript("OnLeave", function()
+		settingTipFor = nil
+		if GameTooltip:IsOwned(this) then GameTooltip:Hide() end
+	end)
+end
 
 local function refreshPanel()
 	for _, row in ipairs(panelRows) do
@@ -2066,11 +2447,30 @@ local function buildPanel()
 	end
 
 	local rows = {
-		{ "shown",    "Show the Next Blessing button" },
-		{ "collapse", "Collapse: show buttons on title mouseover" },
-		{ "below",    "Button below the title, bar grows upwards" },
-		{ "list",     "Target list in the button" },
-		{ "tooltips", "Tooltip on the button" },
+		{ "shown",    "Show the Next Blessing button",
+			{ "Shows the button that casts your next blessing on PallyPower's buff bar.",
+			  "Chat: /ppnext show | hide" } },
+		{ "collapse", "Collapse: show buttons on title mouseover",
+			{ "PallyPower's own buttons stay hidden until you hover the \"Pally Buffs\" title,",
+			  "and fold away 0.3 s after the mouse leaves the bar. On by default.",
+			  "Chat: /ppnext collapse" } },
+		{ "below",    "Button below the title, bar grows upwards",
+			{ "Puts this button under the title and makes the bar grow upwards, so opening it",
+			  "never moves the title or the button. On by default.",
+			  "Chat: /ppnext below" } },
+		{ "list",     "Target list in the button",
+			{ "Lists who the next click is about inside the button: time left, and whether a",
+			  "cast would reach them (OK, OOR, LOS, Dead, Not Here, Tank).",
+			  "Chat: /ppnext list" } },
+		{ "tooltips", "Tooltips (button and settings)",
+			{ "The button's tooltip (everyone, in the order the button works through them)",
+			  "and these explainers.",
+			  "Chat: /ppnext tooltips" } },
+		{ "others",   "Other blessing types in the tooltip",
+			{ "Also lists each player's other blessing types in the button's tooltip, e.g.",
+			  "Kings and Wisdom when you give them Might, with time left (known only with",
+			  "ClassicAPI). Your own blessing type is always shown, whoever cast it. Off by default.",
+			  "Chat: /ppnext others" } },
 	}
 	for i, r in ipairs(rows) do
 		local key = r[1]
@@ -2082,6 +2482,7 @@ local function buildPanel()
 		check:SetScript("OnClick", function()
 			setters[key](this:GetChecked() and true or false)
 		end)
+		settingTip(check, r[2], r[3])
 		table.insert(panelRows, { key = key, check = check })
 		y = y - ROW
 	end
@@ -2101,14 +2502,10 @@ local function buildPanel()
 		setOpacity(this:GetValue())
 		getglobal(this:GetName() .. "Text"):SetText(math.floor(oocAlpha() * 100 + 0.5) .. "%")
 	end)
-	opacitySlider:SetScript("OnEnter", function()
-		GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
-		GameTooltip:SetText("Out-of-combat opacity", 1, 1, 1)
-		GameTooltip:AddLine("Fades the whole buff bar out of combat. Fully visible in combat", 0.85, 0.85, 0.85, 1)
-		GameTooltip:AddLine("and while the mouse is over it. 100% = off.", 0.85, 0.85, 0.85, 1)
-		GameTooltip:Show()
-	end)
-	opacitySlider:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	settingTip(opacitySlider, "Out-of-combat opacity", {
+		"Fades the whole buff bar out of combat. Fully visible in combat and while the",
+		"mouse is over it. 100% = off, 70% by default.",
+		"Chat: /ppnext opacity 10-100" })
 	y = y - ROW - 5
 
 	-- where else these settings live
@@ -2150,6 +2547,8 @@ SlashCmdList["PPNEXT"] = function(msg)
 		toggle("tooltips", "tooltips on", "tooltips off")
 	elseif msg == "list" then
 		toggle("list", "target list on", "target list off")
+	elseif msg == "others" then
+		toggle("others", "other blessing types in the tooltip on", "other blessing types in the tooltip off")
 	elseif msg == "collapse" then
 		toggle("collapse", "collapsed buff bar on", "collapsed buff bar off")
 	elseif msg == "below" then
@@ -2184,7 +2583,7 @@ SlashCmdList["PPNEXT"] = function(msg)
 		if PallyPower_Options then PallyPower_Options() end
 	else
 		setters.shown(not getters.shown())
-		DEFAULT_CHAT_FRAME:AddMessage(GREY .. "/ppnext [show | hide | options | tooltips | list | collapse | below | opacity 10-100 | auras]|r")
+		DEFAULT_CHAT_FRAME:AddMessage(GREY .. "/ppnext [show | hide | options | tooltips | others | list | collapse | below | opacity 10-100 | auras]|r")
 		DEFAULT_CHAT_FRAME:AddMessage(GREY .. "All of these are also in PallyPower's options window (PallyPower Next section).|r")
 		for _, line in ipairs(HELP) do
 			DEFAULT_CHAT_FRAME:AddMessage(GREY .. line .. "|r")
