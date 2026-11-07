@@ -1,8 +1,8 @@
 # AGENTS.md - PallyPowerNext
 
-Companion addon for [PallyPowerTW](https://github.com/ShikawaLePaladin/PallyPowerTW). What it does for players (order, clicks, options, rules) is in `README.md`; this file covers internals and how to work on it.
+Companion addon for [PallyPowerTW](https://github.com/ShikawaLePaladin/PallyPowerTW). `README.md` is a short player overview (purpose, clicks, the button, settings, install). The full behaviour rules (cast order, click scope, statuses, totals, timers) are under "How it works in detail" in `CONTRIBUTING.md`. This file covers internals and how to work on it.
 
-Files: `PallyPowerNext.toc`, `PallyPowerNext.lua`, `README.md` (user docs), this file.
+Files: `PallyPowerNext.toc`, `PallyPowerNext.lua`, `README.md` (user overview), `CONTRIBUTING.md` (contributing and detailed behaviour), this file.
 
 ## How it hooks into PallyPowerTW
 
@@ -85,8 +85,9 @@ for it. Never write it into this repo (it's public).
 
 ## Pre-commit checklist
 
-1. Update `README.md` for any user-visible change (settings, clicks, behaviour) and this file
-   for internals (hooks, stored values, timing). Don't repeat one in the other.
+1. Update the docs for any change: `README.md` only when the overview changes (purpose,
+   clicks, settings), the detailed rules in `CONTRIBUTING.md`, and this file for internals
+   (hooks, stored values, timing). Keep the README short and don't repeat one doc in another.
 2. Keep the header comment in the `.lua` in sync with what the code does.
 3. There are no automated tests: verify in game (`/reload`, and a full relog when
    SavedVariables or the `.toc` changed). Say in the report what wasn't tested.
@@ -99,6 +100,5 @@ for it. Never write it into this repo (it's public).
 6. Use [Conventional Commits](https://www.conventionalcommits.org/) for commit messages
    and PR titles (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`). See `CONTRIBUTING.md`.
 7. Before pushing a change players will notice, bump `## Version:` in the `.toc` once
-   per push, in its own `chore: bump version to x.y` commit: minor (1.1 -> 1.2) when
-   there's a `feat:`, patch (1.1 -> 1.1.1) for fixes only. Docs-only and other changes
-   players don't notice don't need a bump.
+   per push: minor (1.1 -> 1.2) when there's a `feat:`, patch (1.1 -> 1.1.1) for fixes
+   only. Docs-only and other changes players don't notice don't need a bump.
