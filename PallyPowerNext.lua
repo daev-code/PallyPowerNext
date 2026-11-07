@@ -9,20 +9,21 @@
 --
 -- Every click works on what the button shows (the next step, or the one picked with the wheel).
 --
--- Left-click            cast what's missing, or on but with a time left PallyPower doesn't know
+-- L-click               cast what's missing, or on but with a time left PallyPower doesn't know
 --                       (low time left is only shown on the button, not refreshed early)
--- Shift                 "cast anyway": the Greater Blessing shown even if some members are not
+-- Shift L-click         "cast anyway": the Greater Blessing shown even if some members are not
 --                       here, out of range or out of line of sight, or everyone already has
 --                       it, Greater or normal version (refresh / upgrade)
--- Right-click           overrides first, then the normal blessing on a member missing the Greater one
--- Shift+right-click     "cast anyway": also refresh blessings that are still on (lowest time first)
+--                       On the overrides page: the same as Shift R-click
+-- R-click               overrides first, then the normal blessing on a member missing the Greater one
+-- Shift R-click         "cast anyway": also refresh blessings that are still on (lowest time first)
 --
 -- Greater Blessing: only the members WITHOUT an override count. If one of them is not here
 -- (not visible), out of range or out of line of sight (UnitXP), it's skipped unless Shift.
 -- Skipped Greater Blessings leave only overrides.
 --
 -- The button lists who the next click is about, with ">" on the player the click is cast on.
--- When a left-click can't do anything on the page shown, a line says what a right-click would
+-- When an L-click can't do anything on the page shown, a line says what an R-click would
 -- cast instead. A totals line (always shown) counts everyone by state: Applied, Missing, OOR,
 -- LOS, Not Here, Dead, Tank, No config.
 --
@@ -192,7 +193,7 @@ local function auraLeft(unit, b)
 	return c.left[b]
 end
 
--- Timers for the normal blessings right-click casts on group members (PallyPower keeps no
+-- Timers for the normal blessings R-click casts on group members (PallyPower keeps no
 -- timer for those): memberTimers[name] = { blessing = b, expiry = GetTime() + duration }.
 -- A Greater Blessing cast on the group clears them.
 local memberTimers = {}
@@ -246,8 +247,8 @@ end
 
 -- PallyPower's scan says "has Might" for both the Greater and the normal version (10 min,
 -- shorter than the Greater one). The icons tell them apart, so the list can show members who
--- only have the normal one ("single"). They count as covered: a plain left-click doesn't recast
--- the Greater Blessing for them, Shift + left-click does. Buff textures are cached per unit
+-- only have the normal one ("single"). They count as covered: a plain L-click doesn't recast
+-- the Greater Blessing for them, Shift L-click does. Buff textures are cached per unit
 -- for half a second.
 local buffCache = {}  -- unit -> { at = time, tex = { [texture] = true } }
 local function unitBuffTextures(unit)
@@ -273,7 +274,7 @@ local function normalOnly(unit, b)
 	return (tex[small] and not tex[big]) and true or false
 end
 
--- Does a Greater Blessing group member need the Greater Blessing on a plain left-click?
+-- Does a Greater Blessing group member need the Greater Blessing on a plain L-click?
 -- Missing, or on with an unknown time - but someone with only the normal version is covered.
 local function memberNeeds(g, m, left)
 	if m.stats[g] and normalOnly(m.unit, g) then return false end
@@ -484,7 +485,7 @@ local function tryGroup(group, force, dry, overExisting)
 		local parts = {}
 		if notHere > 0 then table.insert(parts, notHere .. " not here") end
 		if outOfReach > 0 then table.insert(parts, outOfReach .. " out of range or sight") end
-		return nil, string.format("Greater %s (%s): %s - Shift-click to cast anyway.",
+		return nil, string.format("Greater %s (%s): %s - Shift L-click to cast anyway.",
 			blessingName(g), className(c), table.concat(parts, ", "))
 	end
 
@@ -569,7 +570,7 @@ local function tryOverride(o, dry, anyway)
 	return "cast"
 end
 
--- Right-click fallback: the normal (single-target) version of a group's blessing on one member
+-- R-click               fallback: the normal (single-target) version of a group's blessing on one member
 -- who'd otherwise get the Greater Blessing (no override) and is missing it. Only when the
 -- blessing is missing - a member who has the Greater one isn't touched.
 -- dry = preview only, like tryOverride's.
@@ -608,7 +609,7 @@ local function tryNormal(group, m, anyway, dry)
 	return "cast"
 end
 
--- Right-click order: overrides first (of onlyGroup's class when one is given), then unless
+-- R-click               order: overrides first (of onlyGroup's class when one is given), then unless
 -- overridesOnly the normal blessing on members who'd otherwise get the Greater one (only
 -- onlyGroup's). anyway (Shift): also refreshes, so both lists go missing first, then
 -- unknown time, then lowest time. Returns { {o=} | {group=, m=} } in the order to try them.
@@ -718,7 +719,7 @@ local function tryPersonal(pp, dry)
 	return "cast"
 end
 
--- What would a left-click do right now (with the modifiers currently held)? Same order and
+-- What would an L-click do right now (with the modifiers currently held)? Same order and
 -- rules as doNext, but with distance/LoS instead of a spell on the cursor.
 -- Returns info {group or override, class, blessing, text}, or nil plus the first blocking note
 -- and what it blocked ({group=} or {override=}).
@@ -799,7 +800,7 @@ local function doNext(button)
 
 	-- Every click works on what the button shows (the next step, or the one picked with the
 	-- wheel): your personal passives, one Greater Blessing group, or the overrides. Only when
-	-- it shows nothing does a left-click go through everything in order.
+	-- it shows nothing does an L-click go through everything in order.
 	local subj = status.subject
 	local onlyGroup, personalOnly
 	if subj and subj.personal then
@@ -830,8 +831,10 @@ local function doNext(button)
 	beginCasting()
 
 	local result, n
-	if rightClick then
-		-- Right-click: overrides first (of the group shown), then the normal blessing on
+	-- On the overrides page, Shift L-click does the same as Shift R-click (refresh
+	-- the override that runs out first), so Shift L-click and Shift R-click agree there.
+	if rightClick or (overridesOnly and force) then
+		-- R-click: overrides first (of the group shown), then the normal blessing on
 		-- members who'd otherwise get the Greater one and are missing it - not when the button
 		-- shows the overrides. Shift: "cast anyway" - also refresh blessings that are still
 		-- on, starting with the one that runs out first (missing first, then unknown time,
@@ -994,7 +997,7 @@ local function computeStatus()
 		end
 		s.subject = s.next or blockedSubject  -- who the target list shows
 		-- Nothing to do: the button is on whatever runs out first (the corner time's group /
-		-- player), so its list, right-click and wheel start from there.
+		-- player), so its list, R-click and wheel start from there.
 		if not s.subject and s.minSubject then s.subject = s.minSubject end
 
 		-- Wheel selection overrides what the icons and list show.
@@ -1048,11 +1051,11 @@ local function computeStatus()
 			end
 		end
 
-		-- What a click on this page does, with the modifiers held now. Left-click (leftNext):
+		-- What a click on this page does, with the modifiers held now. L-click (leftNext):
 		-- on a group, the Greater Blessing and the member it's cast on; on the overrides, the
-		-- first one in reach. Right-click (rightNext) is worked out when a left-click can't do
+		-- first one in reach. R-click (rightNext) is worked out when an L-click can't do
 		-- anything here, or while Shift is held (both lines are shown then). ">" marks the
-		-- left-click target, else the right-click one.
+		-- L-click target, else the R-click one.
 		local shift = IsShiftKeyDown()
 		s.shift = shift
 		local cgroups, coverrides = collect()  -- living members only, as a click sees them
@@ -1069,9 +1072,13 @@ local function computeStatus()
 				info.text = info.text .. " (" .. info.target .. ")"
 			end
 		elseif subj and (subj.override or subj.individual) then
-			for _, o in ipairs(coverrides) do
-				local r, _, info = tryOverride(o, true)
-				if r then s.leftNext, s.markName = info, info.target; break end
+			if shift then
+				s.bothClicks = true  -- Shift L-click = Shift R-click here (set from rightNext below)
+			else
+				for _, o in ipairs(coverrides) do
+					local r, _, info = tryOverride(o, true)
+					if r then s.leftNext, s.markName = info, info.target; break end
+				end
 			end
 		elseif subj and subj.personal then
 			for _, pp in ipairs(personalList()) do
@@ -1081,7 +1088,7 @@ local function computeStatus()
 		end
 		if subj and not subj.personal and (shift or not s.leftNext) then
 			if subj.group and not onlyGroup then
-				-- nobody alive in that group: nothing to right-click
+				-- nobody alive in that group: nothing to R-click
 			else
 				for _, e in ipairs(rightClickPlan(cgroups, coverrides, onlyGroup, not subj.group, shift)) do
 					local r, info, _
@@ -1098,6 +1105,7 @@ local function computeStatus()
 				end
 			end
 		end
+		if s.bothClicks then s.leftNext = s.rightNext end
 
 		-- Totals over everyone in the group or raid: one category per player, for your
 		-- blessing on them.
@@ -1157,7 +1165,7 @@ local TOTALS = {
 	{ "Tank" },
 	{ "No config", 0.60, 0.60, 0.60 },
 }
-local RIGHT_R, RIGHT_G, RIGHT_B = 0.62, 0.72, 0.85   -- right-click line (muted blue)
+local RIGHT_R, RIGHT_G, RIGHT_B = 0.62, 0.72, 0.85   -- R-click line (muted blue)
 
 -- The button shows the same "page" as the tooltip does for the group / player it's on:
 --   header:  [class][blessing] G. Might - Paladin               6:22
@@ -1223,14 +1231,14 @@ colHead:SetTextColor(0.6, 0.6, 0.6)
 colHead:SetText("Can cast?")
 colHead:Hide()
 
--- "Shift-click: G. Might -> Warrior (Kael)" under the rows while Shift is held
+-- "Shift L-click: G. Might -> Warrior (Kael)" under the rows while Shift is held
 local leftLine = list:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 leftLine:SetJustifyH("LEFT")
 leftLine:SetWidth(BUTTON_W - 12)
 leftLine:SetHeight(LIST_LINE)
 leftLine:Hide()
 
--- "Right-click: Might -> Kael" under the rows, when a left-click can't do anything here (or
+-- "R-click: Might -> Kael" under the rows, when an L-click can't do anything here (or
 -- while Shift is held)
 local rightLine = list:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 rightLine:SetJustifyH("LEFT")
@@ -1243,7 +1251,7 @@ rightLine:Hide()
 -- between categories. The lines get no width, so the game never wraps one by itself (which
 -- could split "Not Here (1)"); totalsLines decides what goes on each line.
 -- They sit in their own strip at the top of the button, with a thin line under them; the
--- list (header, rows, right-click line) is moved down below it.
+-- list (header, rows, R-click line) is moved down below it.
 local totalsFrame = CreateFrame("Frame", nil, button)
 totalsFrame:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
 totalsFrame:SetWidth(BUTTON_W)
@@ -1354,7 +1362,7 @@ end
 -- "missing" (muted red). In a Greater Blessing group, a time that matches the group's time
 -- (in the header) isn't repeated: it's left blank.
 local SAME_TIME = 3  -- seconds
-local SINGLE_TEXT = "|cffd8c890single|r"  -- has only the normal version (Shift + left-click upgrades it)
+local SINGLE_TEXT = "|cffd8c890single|r"  -- has only the normal version (Shift L-click upgrades it)
 local function assignedText(has, left, headerLeft)
 	if not has then return "|cffd08a8amissing|r" end
 	if left and headerLeft and math.abs(left - headerLeft) < SAME_TIME then return "" end
@@ -1496,29 +1504,35 @@ local function refreshList()
 	if nrows > 0 then colHead:Show() else colHead:Hide() end
 	local y = HEADER_H + (nrows > 0 and (COLHEAD_H + nrows * LIST_LINE + 2) or 0)
 
-	-- click lines: with Shift held, what Shift-click and Shift-right-click do here; without,
-	-- the right-click line only when a left-click can't do anything on this page
+	-- click lines: with Shift held, what Shift L-click and Shift R-click do here; without,
+	-- the R-click line only when an L-click can't do anything on this page. A line
+	-- that doesn't fit the button's width wraps onto a second line instead of being cut off.
+	local function placeClickLine(fs, text)
+		listMeasure:SetText(text)
+		local lines = (listMeasure:GetStringWidth() > BUTTON_W - 12 - 2) and 2 or 1
+		fs:ClearAllPoints()
+		fs:SetPoint("TOPLEFT", list, "TOPLEFT", 6, -y)
+		fs:SetHeight(lines * LIST_LINE)
+		fs:SetText(text)
+		fs:Show()
+		y = y + lines * LIST_LINE
+	end
 	if status.shift then
-		leftLine:ClearAllPoints()
-		leftLine:SetPoint("TOPLEFT", list, "TOPLEFT", 6, -y)
-		if status.leftNext then
-			leftLine:SetText("Shift-click: " .. (string.gsub(status.leftNext.text, "^Greater ", "G. ")))
+		if status.bothClicks and status.leftNext then
 			leftLine:SetTextColor(OK_R, OK_G, OK_B)
+			placeClickLine(leftLine, "Shift L/R-click: " .. status.leftNext.text)
+		elseif status.leftNext then
+			leftLine:SetTextColor(OK_R, OK_G, OK_B)
+			placeClickLine(leftLine, "Shift L-click: " .. (string.gsub(status.leftNext.text, "^Greater ", "G. ")))
 		else
-			leftLine:SetText("Shift-click: nothing to cast here")
 			leftLine:SetTextColor(0.6, 0.6, 0.6)
+			placeClickLine(leftLine, "Shift L-click: nothing to cast here")
 		end
-		leftLine:Show()
-		y = y + LIST_LINE
 	else
 		leftLine:Hide()
 	end
-	if status.rightNext then
-		rightLine:ClearAllPoints()
-		rightLine:SetPoint("TOPLEFT", list, "TOPLEFT", 6, -y)
-		rightLine:SetText((status.shift and "Shift-right: " or "Right-click: ") .. status.rightNext.text)
-		rightLine:Show()
-		y = y + LIST_LINE
+	if status.rightNext and not status.bothClicks then
+		placeClickLine(rightLine, (status.shift and "Shift R-click: " or "R-click: ") .. status.rightNext.text)
 	else
 		rightLine:Hide()
 	end
@@ -1633,28 +1647,29 @@ end
 
 local HELP = {
 	"Every click works on what the button shows.",
-	"Left-click: your aura / Righteous Fury first when missing (as set",
+	"L-click: your aura / Righteous Fury first when missing (as set",
 	"   up in PallyPower), then the next missing blessing",
 	"   (or one whose time left PallyPower doesn't know).",
 	"   Greater Blessings first (classes with overrides first),",
 	"   then your individual overrides.",
 	"   Low time left only shows on the button (yellow + time).",
-	"Shift: cast the Greater Blessing shown anyway, even if some of",
-	"   the class is not here, out of range or out of line of sight,",
+	"Shift L-click: cast the Greater Blessing shown anyway, even if",
+	"   some of the class is not here, out of range or out of sight,",
 	"   or everyone already has it: refreshes it, and upgrades",
 	"   members who only have the normal version (\"single\").",
-	"Right-click: overrides first, then the normal (single) blessing",
+	"   On Individual, Shift L-click is the same as Shift R-click.",
+	"R-click: overrides first, then the normal (single) blessing",
 	"   on one member missing their Greater Blessing per click.",
-	"Shift+right-click: cast anyway - also refresh blessings that are",
+	"Shift R-click: cast anyway - also refresh blessings that are",
 	"   still on, the one that runs out first first.",
 	"Mouse wheel: pick a group (or the overrides); clicks then work",
 	"   on that one. Back to next when the mouse leaves the button.",
 	"List in the button: who the next click is about -",
 	"   OK, OOR (range), LOS (line of sight), Dead, Not Here.",
 	"   Grey names already have it.   /ppnext list toggles it.",
-	"   > marks who the click is cast on. When a left-click can't",
-	"   do anything there, a line shows what a right-click would do.",
-	"   Holding Shift shows what Shift-click and Shift-right-click do.",
+	"   > marks who the click is cast on. When an L-click can't",
+	"   do anything there, a line shows what an R-click would do.",
+	"   Holding Shift shows what Shift L-click and Shift R-click do.",
 	"Totals line: everyone you bless - Applied, Missing (in reach),",
 	"   OOR, LOS, Not Here, Dead, Tank, No config (nothing assigned).",
 	"PallyPower's buttons stay hidden until you mouse over the",
@@ -1959,15 +1974,17 @@ local function showTooltip()
 		end
 		GameTooltip:AddLine(string.format("Selected (%d/%d): %s", status.selIndex, status.selCount, what), 0.62, 0.72, 0.85)
 	end
-	if status.leftNext then
-		GameTooltip:AddLine((status.shift and "Shift-click: " or "Next click: ") .. status.leftNext.text, OK_R, OK_G, OK_B)
+	if status.bothClicks and status.leftNext then
+		GameTooltip:AddLine("Shift L/R-click: " .. status.leftNext.text, OK_R, OK_G, OK_B)
+	elseif status.leftNext then
+		GameTooltip:AddLine((status.shift and "Shift L-click: " or "Next L-click: ") .. status.leftNext.text, OK_R, OK_G, OK_B)
 	elseif status.shift then
-		GameTooltip:AddLine("Shift-click: nothing to cast here", 0.6, 0.6, 0.6)
+		GameTooltip:AddLine("Shift L-click: nothing to cast here", 0.6, 0.6, 0.6)
 	elseif not sel and status.blocked then
 		GameTooltip:AddLine(status.blocked, 0.82, 0.55, 0.55, 1)
 	end  -- all up: the totals line above says "All applied"
-	if status.rightNext then
-		GameTooltip:AddLine((status.shift and "Shift-right: " or "Right-click: ") .. status.rightNext.text, RIGHT_R, RIGHT_G, RIGHT_B)
+	if status.rightNext and not status.bothClicks then
+		GameTooltip:AddLine((status.shift and "Shift R-click: " or "R-click: ") .. status.rightNext.text, RIGHT_R, RIGHT_G, RIGHT_B)
 	end
 
 	if AllPallys and AllPallys[me()] and CurrentBuffs and PallyPower_Assignments then

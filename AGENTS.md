@@ -14,7 +14,7 @@ Files: `PallyPowerNext.toc`, `PallyPowerNext.lua`, `README.md` (user docs), this
 - PallyPower's scan (`CurrentBuffs`) marks a blessing as present for either version. To find
   members who only have the normal one (`normalOnly`), the addon compares their `UnitBuff`
   textures with those two icon tables (cached per unit for 0.5 s). They're shown as `single`
-  and count as covered (`memberNeeds`), so only Shift + left-click (`overExisting`) recasts the
+  and count as covered (`memberNeeds`), so only Shift L-click (`overExisting`) recasts the
   Greater Blessing over them.
 - PallyPower wipes a class timer when its UI refreshes before the buff scan sees a new buff
   (its own casts are shielded by a local this addon can't reach), so the addon keeps its own
@@ -33,14 +33,14 @@ Files: `PallyPowerNext.toc`, `PallyPowerNext.lua`, `README.md` (user docs), this
   shows; `>` (on a row, button and tooltip) follows `status.markName`, who the click is cast
   on. The click lines (`status.leftNext` / `status.rightNext`, for the modifiers held), the
   target and the totals are worked out once a second (and when Shift changes) in
-  `computeStatus` with the same dry-run `try*` functions as the preview. Right-click order
+  `computeStatus` with the same dry-run `try*` functions as the preview. R-click order
   comes from `rightClickPlan`, which the click handler uses too, so the line and the click
   can't disagree. `collect` also returns the players you have nothing assigned to ("No
   config").
 - Clicks route by `status.subject` (what the button shows), not by a fresh preview, so a
   click never works on anything else. `OnClick` sets `nextRefresh = 0` so the button
   refreshes on the next frame; the recent-cast guard then moves it past the step just cast.
-  Shift + left-click passes `overExisting` to `tryGroup`, which skips the "nobody needs it"
+  Shift L-click passes `overExisting` to `tryGroup`, which skips the "nobody needs it"
   check.
 - Collapsed buff bar: PallyPower's buttons are faded out and made click-through rather than
   hidden, because PallyPower shows and hides them itself on every layout update.
