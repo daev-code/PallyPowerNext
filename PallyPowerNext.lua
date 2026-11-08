@@ -1,7 +1,9 @@
 -- PallyPower Next Blessing
 --
--- One button that does the NEXT needed blessing action from your PallyPowerTW assignments,
--- one cast per click:
+-- One button that does the NEXT needed blessing action from your PallyPower assignments,
+-- one cast per click. Works with PallyPowerTW or Aegis: RallyPower (which carries its own
+-- copy of the PallyPowerTW engine); the .toc lists both as optional dependencies and the
+-- one that's loaded is the host.
 --
 --   1. Greater Blessings (classes that have individual overrides first). A Greater Blessing
 --      also overwrites your blessing on the override members, so all of these go first.
@@ -39,6 +41,26 @@ local NOTE_R, NOTE_G, NOTE_B = 0.80, 0.75, 0.55   -- muted status colours
 local OK_R, OK_G, OK_B = 0.55, 0.80, 0.55
 
 PPNext_Settings = PPNext_Settings or {}
+
+-- The host addon: its folder (for icon paths), the name to show, and the title text of its
+-- buff bar. Without either host, nothing below is loaded (it builds on the host's frames).
+local HOST
+if IsAddOnLoaded("Aegis_RallyPower") then
+	HOST = { folder = "Aegis_RallyPower", name = "Aegis: RallyPower", title = "Rally Buffs", rally = true }
+elseif IsAddOnLoaded("PallyPowerTW") then
+	HOST = { folder = "PallyPowerTW", name = "PallyPowerTW", title = "Pally Buffs" }
+end
+if not HOST then
+	local warn = CreateFrame("Frame")
+	warn:RegisterEvent("PLAYER_LOGIN")
+	warn:SetScript("OnEvent", function()
+		local _, cls = UnitClass("player")
+		if cls == "PALADIN" then
+			DEFAULT_CHAT_FRAME:AddMessage("PallyPower Next: needs PallyPowerTW or Aegis: RallyPower, and neither is loaded.")
+		end
+	end)
+	return
+end
 
 local function feedback(text, r, g, b)
 	if PallyPower_ShowFeedback then
@@ -235,8 +257,8 @@ end
 
 
 local function ppIconPrefix()
-	if PP_PerUser and PP_PerUser.usehdicons == true then return "AddOns\\PallyPowerTW\\HD" end
-	return "AddOns\\PallyPowerTW\\"
+	if PP_PerUser and PP_PerUser.usehdicons == true then return "AddOns\\" .. HOST.folder .. "\\HD" end
+	return "AddOns\\" .. HOST.folder .. "\\"
 end
 
 -- PallyPower's icon path -> the texture path UnitBuff returns.
@@ -777,7 +799,7 @@ local function doNext(button)
 	local _, cls = UnitClass("player")
 	if cls ~= "PALADIN" then return end
 	if not (AllPallys and CurrentBuffs and PallyPower_Assignments) then
-		feedback("PallyPowerTW isn't loaded.", NOTE_R, NOTE_G, NOTE_B)
+		feedback(HOST.name .. " isn't ready yet.", NOTE_R, NOTE_G, NOTE_B)
 		return
 	end
 	if PallyPower_ScanSpells then PallyPower_ScanSpells() end
@@ -906,7 +928,7 @@ local countText  = getglobal("PPNextButtonText")
 local classIcon  = getglobal("PPNextButtonClassIcon")
 local buffIcon   = getglobal("PPNextButtonBuffIcon")
 
-local IDLE_CLASS_ICON = "Interface\\AddOns\\PallyPowerTW\\Icons\\Paladin"
+local IDLE_CLASS_ICON = "Interface\\AddOns\\" .. HOST.folder .. "\\Icons\\Paladin"
 local IDLE_BUFF_ICON = "Interface\\Icons\\Spell_Holy_GreaterBlessingofKings"
 
 local function attachToBuffBar()
@@ -1673,7 +1695,7 @@ local HELP = {
 	"Totals line: everyone you bless - Applied, Missing (in reach),",
 	"   OOR, LOS, Not Here, Dead, Tank, No config (nothing assigned).",
 	"PallyPower's buttons stay hidden until you mouse over the",
-	"   \"Pally Buffs\" title.   /ppnext collapse toggles it.",
+	"   \"" .. HOST.title .. "\" title.   /ppnext collapse toggles it.",
 	"/ppnext below: this button under the title, bar grows up (default).",
 	"/ppnext opacity 10-100: fade the bar out of combat (100 = off, 70 default);",
 	"   fully visible in combat and while the mouse is over it.",
@@ -2386,14 +2408,41 @@ local function setOpacity(a)
 end
 
 
-------------------------------------------------------------------------------
--- "PallyPower Next" section at the bottom of PallyPower's options window
--- (PallyPower_OptionsFrame, the one with Global Transparency). Same layout as
--- PallyPower's own rows: label on the left at x 7, control on the right at x -5, 25 px apart.
-------------------------------------------------------------------------------
+local panelRows = {}      -- { key =, check = } for every settings checkbox, in both windows
+local opacitySliders = {} -- the opacity slider in each window
 
-local panelRows = {}
-local opacitySlider
+-- The settings rows: key in setters/getters, label, explainer lines.
+local SETTING_ROWS = {
+	{ "shown",    "Show the Next Blessing button",
+		{ "Shows the button that casts your next blessing on PallyPower's buff bar.",
+		  "Chat: /ppnext show | hide" } },
+	{ "collapse", "Collapse: show buttons on title mouseover",
+		{ "PallyPower's own buttons stay hidden until you hover the \"" .. HOST.title .. "\" title,",
+		  "and fold away 0.3 s after the mouse leaves the bar. On by default.",
+		  "Chat: /ppnext collapse" } },
+	{ "below",    "Button below the title, bar grows upwards",
+		{ "Puts this button under the title and makes the bar grow upwards, so opening it",
+		  "never moves the title or the button. On by default.",
+		  "Chat: /ppnext below" } },
+	{ "list",     "Target list in the button",
+		{ "Lists who the next click is about inside the button: time left, and whether a",
+		  "cast would reach them (OK, OOR, LOS, Dead, Not Here, Tank).",
+		  "Chat: /ppnext list" } },
+	{ "tooltips", "Tooltips (button and settings)",
+		{ "The button's tooltip (everyone, in the order the button works through them)",
+		  "and these explainers.",
+		  "Chat: /ppnext tooltips" } },
+	{ "others",   "Other blessing types in the tooltip",
+		{ "Also lists each player's other blessing types in the button's tooltip, e.g.",
+		  "Kings and Wisdom when you give them Might, with time left (known only with",
+		  "ClassicAPI). Your own blessing type is always shown, whoever cast it. Off by default.",
+		  "Chat: /ppnext others" } },
+}
+
+SETTING_ROWS.opacityTip = {
+	"Fades the whole buff bar out of combat. Fully visible in combat and while the",
+	"mouse is over it. 100% = off, 70% by default.",
+	"Chat: /ppnext opacity 10-100" }
 
 -- Explainers on the settings controls: shown after a short delay, and only while tooltips are
 -- on (the same setting as the button's tooltip).
@@ -2433,13 +2482,52 @@ local function refreshPanel()
 	for _, row in ipairs(panelRows) do
 		row.check:SetChecked(getters[row.key]())
 	end
-	if opacitySlider then
-		opacitySlider.updating = true
-		opacitySlider:SetValue(oocAlpha())
-		opacitySlider.updating = nil
-		getglobal(opacitySlider:GetName() .. "Text"):SetText(math.floor(oocAlpha() * 100 + 0.5) .. "%")
+	for _, s in ipairs(opacitySliders) do
+		s.updating = true
+		s:SetValue(oocAlpha())
+		s.updating = nil
+		getglobal(s:GetName() .. "Text"):SetText(s.valueText())
 	end
 end
+
+-- A settings checkbox / the opacity slider, wired to the shared setters.
+local function makeCheck(name, parent, row)
+	local check = CreateFrame("CheckButton", name, parent, "OptionsCheckButtonTemplate")
+	local key = row[1]
+	check:SetScript("OnClick", function()
+		setters[key](this:GetChecked() and true or false)
+	end)
+	settingTip(check, row[2], row[3])
+	table.insert(panelRows, { key = key, check = check })
+	return check
+end
+
+local function makeOpacitySlider(name, parent, width, prefix)
+	local s = CreateFrame("Slider", name, parent, "OptionsSliderTemplate")
+	s:SetWidth(width)
+	s:SetHeight(16)
+	s:SetMinMaxValues(0.1, 1)
+	s:SetValueStep(0.05)
+	getglobal(name .. "Low"):SetText("10%")
+	getglobal(name .. "High"):SetText("100%")
+	s.valueText = function() return prefix .. math.floor(oocAlpha() * 100 + 0.5) .. "%" end
+	s:SetScript("OnValueChanged", function()
+		if this.updating then return end
+		setOpacity(this:GetValue())
+		getglobal(this:GetName() .. "Text"):SetText(this.valueText())
+	end)
+	settingTip(s, "Out-of-combat opacity", SETTING_ROWS.opacityTip)
+	table.insert(opacitySliders, s)
+	return s
+end
+
+
+------------------------------------------------------------------------------
+-- "PallyPower Next" section at the bottom of PallyPower's options window
+-- (PallyPower_OptionsFrame, the one with Global Transparency). Same layout as
+-- PallyPower's own rows: label on the left at x 7, control on the right at x -5, 25 px apart.
+-- With Aegis: RallyPower this window is only reachable with /rpc legacy (see below).
+------------------------------------------------------------------------------
 
 local function buildPanel()
 	local opts = getglobal("PallyPower_OptionsFrame")
@@ -2463,66 +2551,19 @@ local function buildPanel()
 		fs:SetText(text)
 	end
 
-	local rows = {
-		{ "shown",    "Show the Next Blessing button",
-			{ "Shows the button that casts your next blessing on PallyPower's buff bar.",
-			  "Chat: /ppnext show | hide" } },
-		{ "collapse", "Collapse: show buttons on title mouseover",
-			{ "PallyPower's own buttons stay hidden until you hover the \"Pally Buffs\" title,",
-			  "and fold away 0.3 s after the mouse leaves the bar. On by default.",
-			  "Chat: /ppnext collapse" } },
-		{ "below",    "Button below the title, bar grows upwards",
-			{ "Puts this button under the title and makes the bar grow upwards, so opening it",
-			  "never moves the title or the button. On by default.",
-			  "Chat: /ppnext below" } },
-		{ "list",     "Target list in the button",
-			{ "Lists who the next click is about inside the button: time left, and whether a",
-			  "cast would reach them (OK, OOR, LOS, Dead, Not Here, Tank).",
-			  "Chat: /ppnext list" } },
-		{ "tooltips", "Tooltips (button and settings)",
-			{ "The button's tooltip (everyone, in the order the button works through them)",
-			  "and these explainers.",
-			  "Chat: /ppnext tooltips" } },
-		{ "others",   "Other blessing types in the tooltip",
-			{ "Also lists each player's other blessing types in the button's tooltip, e.g.",
-			  "Kings and Wisdom when you give them Might, with time left (known only with",
-			  "ClassicAPI). Your own blessing type is always shown, whoever cast it. Off by default.",
-			  "Chat: /ppnext others" } },
-	}
-	for i, r in ipairs(rows) do
-		local key = r[1]
+	for i, r in ipairs(SETTING_ROWS) do
 		label(r[2], y)
-		local check = CreateFrame("CheckButton", "PPNextOption" .. i, opts, "OptionsCheckButtonTemplate")
+		local check = makeCheck("PPNextOption" .. i, opts, r)
 		check:SetWidth(20)
 		check:SetHeight(20)
 		check:SetPoint("TOPRIGHT", opts, "TOPRIGHT", -5, y + 2)
-		check:SetScript("OnClick", function()
-			setters[key](this:GetChecked() and true or false)
-		end)
-		settingTip(check, r[2], r[3])
-		table.insert(panelRows, { key = key, check = check })
 		y = y - ROW
 	end
 
 	y = y - 10  -- room for the slider's value text above it
 	label("Out-of-combat opacity", y)
-	opacitySlider = CreateFrame("Slider", "PPNextOpacitySlider", opts, "OptionsSliderTemplate")
-	opacitySlider:SetWidth(220)
-	opacitySlider:SetHeight(16)
-	opacitySlider:SetPoint("TOPRIGHT", opts, "TOPRIGHT", -5, y)
-	opacitySlider:SetMinMaxValues(0.1, 1)
-	opacitySlider:SetValueStep(0.05)
-	getglobal("PPNextOpacitySliderLow"):SetText("10%")
-	getglobal("PPNextOpacitySliderHigh"):SetText("100%")
-	opacitySlider:SetScript("OnValueChanged", function()
-		if this.updating then return end
-		setOpacity(this:GetValue())
-		getglobal(this:GetName() .. "Text"):SetText(math.floor(oocAlpha() * 100 + 0.5) .. "%")
-	end)
-	settingTip(opacitySlider, "Out-of-combat opacity", {
-		"Fades the whole buff bar out of combat. Fully visible in combat and while the",
-		"mouse is over it. 100% = off, 70% by default.",
-		"Chat: /ppnext opacity 10-100" })
+	local slider = makeOpacitySlider("PPNextOpacitySlider", opts, 220, "")
+	slider:SetPoint("TOPRIGHT", opts, "TOPRIGHT", -5, y)
 	y = y - ROW - 5
 
 	-- where else these settings live
@@ -2531,7 +2572,11 @@ local function buildPanel()
 	note:SetWidth(386)
 	note:SetJustifyH("LEFT")
 	note:SetTextColor(0.6, 0.6, 0.6)
-	note:SetText("Also as chat commands: type /ppnext for the list (/ppnext options opens this window).")
+	if HOST.rally then
+		note:SetText("Also in the RallyPower options window (Buttons tab), and as chat commands: type /ppnext for the list.")
+	else
+		note:SetText("Also as chat commands: type /ppnext for the list (/ppnext options opens this window).")
+	end
 	y = y - 18
 
 	opts:SetHeight(-y + 5)
@@ -2545,6 +2590,115 @@ local function buildPanel()
 end
 
 buildPanel()
+
+------------------------------------------------------------------------------
+-- Aegis: RallyPower: its Options button opens its own tabbed window, so the same section
+-- also goes at the bottom of that window's "Buttons" tab, in its style (checks at x 14,
+-- 24 px apart). Everything in Aegis_Options.lua is local, so this works from outside:
+--   - AegisRP_OptionsToggle is wrapped, because the window (AegisRP_OptionsFrame) is only
+--     created the first time it opens;
+--   - then the "Buttons" tab button's OnClick and the window's OnShow are wrapped.
+-- After either, when the Buttons tab is the one shown (AegisRP_Settings.optLastTab == 2), its
+-- content panel is the shown child with `built` set (tab buttons have `label` instead). Our
+-- rows go under its contentH, which is raised, and the tab's original OnClick (ShowTab(2)) is
+-- run again so the window grows to fit.
+------------------------------------------------------------------------------
+
+-- rally.x: Aegis's left inset for checks; rally.tabClick: the Buttons tab's original OnClick.
+local rally = { x = 14 }
+
+function rally.build(p)
+	p.ppNextSection = true
+	local y = -(p.contentH or 0)
+
+	local header = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	header:SetPoint("TOPLEFT", p, "TOPLEFT", rally.x - 2, y - 4)
+	header:SetText("PallyPower Next")
+	local line = p:CreateTexture(nil, "ARTWORK")
+	line:SetTexture(0.8, 0.65, 0.2)
+	line:SetHeight(1)
+	line:SetPoint("TOPLEFT", p, "TOPLEFT", rally.x - 2, y - 20)
+	line:SetPoint("TOPRIGHT", p, "TOPRIGHT", -(rally.x - 2), y - 20)
+	line:SetAlpha(0.35)
+	y = y - 26
+
+	for i, r in ipairs(SETTING_ROWS) do
+		local check = makeCheck("PPNextRallyOption" .. i, p, r)
+		check:SetWidth(24)
+		check:SetHeight(24)
+		check:SetPoint("TOPLEFT", p, "TOPLEFT", rally.x, y)
+		getglobal(check:GetName() .. "Text"):SetText(r[2])
+		y = y - 24
+	end
+
+	local slider = makeOpacitySlider("PPNextRallyOpacitySlider", p, 200, "Out-of-combat opacity: ")
+	slider:SetPoint("TOPLEFT", p, "TOPLEFT", rally.x + 4, y - 16)
+	y = y - 44
+
+	local note = p:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	note:SetPoint("TOPLEFT", p, "TOPLEFT", rally.x - 2, y - 4)
+	note:SetWidth(316)
+	note:SetJustifyH("LEFT")
+	note:SetText("Also as chat commands: type /ppnext for the list.")
+	y = y - 22
+
+	p.contentH = -y
+end
+
+function rally.add()
+	local f = getglobal("AegisRP_OptionsFrame")
+	if not f then return end
+	if not f.ppNextHooked then
+		f.ppNextHooked = true
+		for _, k in ipairs({ f:GetChildren() }) do
+			if k.label and k.label.GetText and k.label:GetText() == "Buttons" then
+				rally.tabClick = k:GetScript("OnClick")
+				k:SetScript("OnClick", function()
+					if rally.tabClick then rally.tabClick() end
+					rally.add()
+				end)
+			end
+		end
+		local origShow = f:GetScript("OnShow")
+		f:SetScript("OnShow", function()
+			if origShow then origShow() end
+			rally.add()
+		end)
+	end
+	local _, cls = UnitClass("player")
+	if cls ~= "PALADIN" or not f:IsShown() then return end
+	if not (AegisRP_Settings and AegisRP_Settings.optLastTab == 2) then return end
+	local panel
+	for _, k in ipairs({ f:GetChildren() }) do
+		if k.built and not k.label and k:IsShown() then panel = k end
+	end
+	if not panel then return end
+	if not panel.ppNextSection then
+		rally.build(panel)
+		if rally.tabClick then rally.tabClick() end  -- ShowTab(2) again: fit the window to it
+	end
+	refreshPanel()
+end
+
+if HOST.rally and AegisRP_OptionsToggle then
+	local origToggle = AegisRP_OptionsToggle
+	AegisRP_OptionsToggle = function()
+		origToggle()
+		rally.add()
+	end
+end
+
+-- /ppnext options: Aegis's window on the Buttons tab, or PallyPower's options window.
+local function openOptions()
+	if HOST.rally and AegisRP_OptionsToggle and AegisRP_Settings then
+		AegisRP_Settings.optLastTab = 2
+		local f = getglobal("AegisRP_OptionsFrame")
+		if f and f:IsShown() then f:Hide() end
+		AegisRP_OptionsToggle()
+	elseif PallyPower_Options then
+		PallyPower_Options()
+	end
+end
 
 
 -- Slash command: shortcuts for the same settings.
@@ -2597,11 +2751,13 @@ SlashCmdList["PPNEXT"] = function(msg)
 			end
 		end
 	elseif msg == "options" or msg == "config" then
-		if PallyPower_Options then PallyPower_Options() end
+		openOptions()
 	else
 		setters.shown(not getters.shown())
 		DEFAULT_CHAT_FRAME:AddMessage(GREY .. "/ppnext [show | hide | options | tooltips | others | list | collapse | below | opacity 10-100 | auras]|r")
-		DEFAULT_CHAT_FRAME:AddMessage(GREY .. "All of these are also in PallyPower's options window (PallyPower Next section).|r")
+		DEFAULT_CHAT_FRAME:AddMessage(GREY .. (HOST.rally
+			and "All of these are also in the RallyPower options window (Buttons tab, PallyPower Next section).|r"
+			or "All of these are also in PallyPower's options window (PallyPower Next section).|r"))
 		for _, line in ipairs(HELP) do
 			DEFAULT_CHAT_FRAME:AddMessage(GREY .. line .. "|r")
 		end

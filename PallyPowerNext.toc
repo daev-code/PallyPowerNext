@@ -1,9 +1,9 @@
 ## Interface: 11200
 ## Title: PallyPower Next Blessing
-## Notes: One button that casts the next missing PallyPowerTW blessing: Greater Blessings first, then individual overrides.
-## Version: 1.1.1
+## Notes: One button that casts the next missing PallyPower blessing (PallyPowerTW or Aegis: RallyPower): Greater Blessings first, then individual overrides.
+## Version: 1.2.0
 ## Author: daev-code
 ## X-Website: https://github.com/daev-code/PallyPowerNext
-## Dependencies: PallyPowerTW
+## OptionalDeps: PallyPowerTW, Aegis_RallyPower
 ## SavedVariablesPerCharacter: PPNext_Settings
 PallyPowerNext.lua

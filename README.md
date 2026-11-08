@@ -1,8 +1,11 @@
 # PallyPower Next Blessing
 
-One button for [PallyPowerTW](https://github.com/ShikawaLePaladin/PallyPowerTW) that casts
-the next blessing you still owe from your PallyPower assignments, one per click. For WoW 1.12
-and Turtle WoW.
+One button for [PallyPowerTW](https://github.com/ShikawaLePaladin/PallyPowerTW) or
+[Aegis: RallyPower](https://github.com/Torchlite-bit/Aegis_RallyPower) that casts the next
+blessing you still owe from your PallyPower assignments, one per click. For WoW 1.12. Use
+one of the two, not both: RallyPower carries its own copy of PallyPowerTW.
+"PallyPower" below means that shared part (assignments, buff bar, timers), whichever addon
+you use.
 
 It works through your list in this order: your aura and Righteous Fury, then Greater
 Blessings, then individual overrides (PallyPower's per-player assignments). A Greater
@@ -53,17 +56,20 @@ means all is well. The tooltip lists everyone in the order the button works thro
 
 ## Settings
 
-In the "PallyPower Next" section at the bottom of PallyPower's options window. Hover a
-setting to see what it does.
+In the "PallyPower Next" section at the bottom of PallyPower's options window. With
+RallyPower, its Options button opens RallyPower's own window instead, and the section is at
+the bottom of that window's Buttons tab (PallyPower's window is still there under
+`/rpc legacy`). Hover a setting to see what it does.
 
 | Setting | Default | What it does |
 |---|---|---|
-| Collapsed bar | On | Hides PallyPower's own buttons until you hover the "Pally Buffs" title |
+| Collapsed bar | On | Hides PallyPower's own buttons until you hover the bar's title ("Pally Buffs", or "Rally Buffs" with RallyPower) |
 | Below layout | On | Puts this button under the title and makes the bar grow upwards |
 | Out-of-combat opacity | 70% | Fades the bar out of combat. Fully visible in combat and on mouseover |
 | Other blessing types in the tooltip | Off | Also lists each player's other blessings in the tooltip |
 
-`/ppnext options` opens the window. `/ppnext show | hide | tooltips | others | list |
+`/ppnext options` opens the window the Options button opens (on the Buttons tab with
+RallyPower). `/ppnext show | hide | tooltips | others | list |
 collapse | below | opacity 10-100` work as shortcuts.
 
 ## Install

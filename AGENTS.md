@@ -1,11 +1,18 @@
 # AGENTS.md - PallyPowerNext
 
-Companion addon for [PallyPowerTW](https://github.com/ShikawaLePaladin/PallyPowerTW). `README.md` is a short player overview (purpose, clicks, the button, settings, install). The full behaviour rules (cast order, click scope, statuses, totals, timers) are under "How it works in detail" in `CONTRIBUTING.md`. This file covers internals and how to work on it.
+Companion addon for [PallyPowerTW](https://github.com/ShikawaLePaladin/PallyPowerTW) or
+[Aegis: RallyPower](https://github.com/Torchlite-bit/Aegis_RallyPower). `README.md` is a short player overview (purpose, clicks, the button, settings, install). The full behaviour rules (cast order, click scope, statuses, totals, timers) are under "How it works in detail" in `CONTRIBUTING.md`. This file covers internals and how to work on it.
 
 Files: `PallyPowerNext.toc`, `PallyPowerNext.lua`, `README.md` (user overview), `CONTRIBUTING.md` (contributing and detailed behaviour), this file.
 
 ## How it hooks into PallyPowerTW
 
+- Host: both addons are `OptionalDeps`; `HOST` holds the loaded one's folder (icon paths)
+  and bar title. With neither, the file returns early. RallyPower bundles an older copy of
+  the PallyPowerTW engine with the same globals, so everything below applies to both.
+- RallyPower's Options button opens its own `AegisRP_OptionsFrame`, so the settings
+  section is also added to its Buttons tab from outside (its code is all local): see the
+  comment above `rally.build`.
 - Reads PallyPowerTW globals: `AllPallys`, `PallyPower_Assignments`, `GetNormalBlessings`,
   `CurrentBuffs`, the timers `LastCast` / `LastCastPlayer`,
   `PallyPower_CastingSalvationOnTank`, `PallyPower_CheckTargetLoS`,
@@ -64,6 +71,7 @@ Files: `PallyPowerNext.toc`, `PallyPowerNext.lua`, `README.md` (user overview), 
 - SavedVariables are loaded after the addon's files: read settings in `ADDON_LOADED` /
   `PLAYER_LOGIN`, not at file load.
 - No `_G` in plain Lua 5.0: use `getfenv(0)` or `getglobal()`.
+- Max 200 locals per function, and the main chunk has 194: put new helpers in a table.
 
 ## Working copy vs repo
 
@@ -77,8 +85,9 @@ for it. Never write it into this repo (it's public).
 
 ## Rules
 
-- Never edit the addon this extends (`PallyPowerTW`). Its folder must stay a clean git clone
-  of https://github.com/ShikawaLePaladin/PallyPowerTW. Everything goes in this companion addon.
+- Never edit the addons this extends (`PallyPowerTW`, `Aegis_RallyPower`). Their folders must
+  stay clean git clones of https://github.com/ShikawaLePaladin/PallyPowerTW and
+  https://github.com/Torchlite-bit/Aegis_RallyPower. Everything goes in this companion addon.
 - UI conventions: prefer buttons and settings over slash commands (slash commands only as
   show/hide/toggle shortcuts); muted, darkened status colours.
 - Nothing here needs network access; go easy on external APIs.
@@ -100,5 +109,5 @@ for it. Never write it into this repo (it's public).
 6. Use [Conventional Commits](https://www.conventionalcommits.org/) for commit messages
    and PR titles (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`). See `CONTRIBUTING.md`.
 7. Before pushing a change players will notice, bump `## Version:` in the `.toc` once
-   per push: minor (1.1 -> 1.2) when there's a `feat:`, patch (1.1 -> 1.1.1) for fixes
+   per push: minor (1.1.0 -> 1.2.0) when there's a `feat:`, patch (1.1.0 -> 1.1.1) for fixes
    only. Docs-only and other changes players don't notice don't need a bump.
